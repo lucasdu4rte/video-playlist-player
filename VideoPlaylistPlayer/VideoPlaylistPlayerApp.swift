@@ -13,5 +13,9 @@ struct VideoPlaylistPlayerApp: App {
         WindowGroup {
             ContentView()
         }
+        .defaultSize(width: 1100, height: 680)
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+        }
     }
 }
