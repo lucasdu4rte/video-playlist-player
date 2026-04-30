@@ -62,13 +62,13 @@ jobs:
           mkdir -p build/export
           cp -R build/VideoPlaylistPlayer.xcarchive/Products/Applications/VideoPlaylistPlayer.app build/export/
 
+      - name: Install create-dmg
+        run: brew install create-dmg
+
       - name: Create DMG
         run: |
-          hdiutil create \
-            -volname "VideoPlaylistPlayer ${{ steps.version.outputs.version }}" \
-            -srcfolder build/export \
-            -ov -format UDZO \
-            "VideoPlaylistPlayer-${{ steps.version.outputs.version }}.dmg"
+          chmod +x scripts/build-dmg.sh
+          scripts/build-dmg.sh "${{ steps.version.outputs.version }}"
 
       - name: Publish GitHub Release (idempotent)
         env:
