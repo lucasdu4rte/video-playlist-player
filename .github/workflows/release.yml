@@ -2,24 +2,45 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [main]
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Extract version from tag
+      - name: Compute next version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          LAST_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            NEW="0.0.1"
+          else
+            IFS='.' read -r MAJ MIN PAT <<< "${LAST_TAG#v}"
+            NEW="${MAJ}.${MIN}.$((PAT + 1))"
+          fi
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
 
       - name: Build macOS archive (ad-hoc signed)
         run: |
@@ -49,11 +70,17 @@ jobs:
             -ov -format UDZO \
             "VideoPlaylistPlayer-${{ steps.version.outputs.version }}.dmg"
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "VideoPlaylistPlayer-${{ steps.version.outputs.version }}.dmg" \
-            --title "VideoPlaylistPlayer ${{ steps.version.outputs.version }}" \
-            --generate-notes
+          DMG="VideoPlaylistPlayer-${VERSION}.dmg"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" --clobber
+          else
+            gh release create "$TAG" "$DMG" \
+              --title "VideoPlaylistPlayer $VERSION" \
+              --generate-notes
+          fi
