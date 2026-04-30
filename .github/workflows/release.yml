@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS archive (ad-hoc signed)
+        run: |
+          xcodebuild \
+            -project VideoPlaylistPlayer.xcodeproj \
+            -scheme VideoPlaylistPlayer \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath build/VideoPlaylistPlayer.xcarchive \
+            MARKETING_VERSION=${{ steps.version.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            archive
+
+      - name: Stage .app for DMG
+        run: |
+          mkdir -p build/export
+          cp -R build/VideoPlaylistPlayer.xcarchive/Products/Applications/VideoPlaylistPlayer.app build/export/
+
+      - name: Create DMG
+        run: |
+          hdiutil create \
+            -volname "VideoPlaylistPlayer ${{ steps.version.outputs.version }}" \
+            -srcfolder build/export \
+            -ov -format UDZO \
+            "VideoPlaylistPlayer-${{ steps.version.outputs.version }}.dmg"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "VideoPlaylistPlayer-${{ steps.version.outputs.version }}.dmg" \
+            --title "VideoPlaylistPlayer ${{ steps.version.outputs.version }}" \
+            --generate-notes
