@@ -234,11 +234,55 @@ struct FileRow: View {
     }
 }
 
+private struct PlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = true
+        view.allowsPictureInPicturePlayback = true
+        return view
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        if nsView.player !== player {
+            nsView.player = player
+        }
+    }
+}
+
+private struct FolderDropTarget: ViewModifier {
+    @Binding var isTargeted: Bool
+    let onDrop: ([URL]) -> Bool
+
+    func body(content: Content) -> some View {
+        content
+            .dropDestination(for: URL.self) { urls, _ in
+                onDrop(urls)
+            } isTargeted: { isTargeted = $0 }
+            .overlay {
+                if isTargeted {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(
+                            Color.accentColor,
+                            style: StrokeStyle(lineWidth: 2, dash: [8, 4])
+                        )
+                        .padding(8)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
 struct ContentView: View {
     @State private var library = LibraryViewModel()
     @State private var player: AVPlayer?
     @State private var endObserver: NSObjectProtocol?
     @State private var currentVideo: FileItem?
+    @State private var isSidebarDropTargeted: Bool = false
+    @State private var isDetailDropTargeted: Bool = false
 
     var body: some View {
         @Bindable var library = library
@@ -305,8 +349,11 @@ struct ContentView: View {
             ContentUnavailableView(
                 "No folder opened",
                 systemImage: "folder",
-                description: Text("Choose a folder from the toolbar to begin.")
+                description: Text("Choose a folder from the toolbar or drag one here.")
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .modifier(FolderDropTarget(isTargeted: $isSidebarDropTargeted, onDrop: handleDrop))
         } else if filteredRoot.isEmpty {
             ContentUnavailableView(
                 library.hideWatched ? "Nothing left to watch" : "No videos here",
@@ -328,9 +375,18 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         if let player {
-            VideoPlayer(player: player)
+            PlayerView(player: player)
                 .frame(minHeight: 400)
                 .background(Color.black)
+        } else if !library.hasOpenedFolder {
+            ContentUnavailableView(
+                "No folder opened",
+                systemImage: "folder",
+                description: Text("Drag a folder here or choose one from the toolbar.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .modifier(FolderDropTarget(isTargeted: $isDetailDropTargeted, onDrop: handleDrop))
         } else {
             ContentUnavailableView(
                 "No video selected",
@@ -353,6 +409,16 @@ struct ContentView: View {
         panel.prompt = "Open"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await library.loadFolder(url) }
+    }
+
+    private func handleDrop(_ urls: [URL]) -> Bool {
+        guard let folder = urls.first(where: isDirectory) else { return false }
+        Task { await library.loadFolder(folder) }
+        return true
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
     private func playVideo(_ video: FileItem) {
