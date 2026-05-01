@@ -283,6 +283,15 @@ struct ContentView: View {
     @State private var currentVideo: FileItem?
     @State private var isSidebarDropTargeted: Bool = false
     @State private var isDetailDropTargeted: Bool = false
+    @AppStorage("playbackSpeed.v1") private var playbackSpeed: Double = 1.0
+
+    private static let speedOptions: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+
+    private static func speedLabel(_ speed: Double) -> String {
+        speed.truncatingRemainder(dividingBy: 1) == 0
+            ? "\(Int(speed))×"
+            : String(format: "%g×", speed)
+    }
 
     var body: some View {
         @Bindable var library = library
@@ -316,6 +325,18 @@ struct ContentView: View {
                 .help("Automatically play the next unwatched video")
             }
             ToolbarItem {
+                Menu {
+                    Picker("Playback Speed", selection: $playbackSpeed) {
+                        ForEach(Self.speedOptions, id: \.self) { speed in
+                            Text(Self.speedLabel(speed)).tag(speed)
+                        }
+                    }
+                } label: {
+                    Label(Self.speedLabel(playbackSpeed), systemImage: "speedometer")
+                }
+                .help("Playback Speed")
+            }
+            ToolbarItem {
                 Button {
                     playPrevious()
                 } label: {
@@ -338,6 +359,12 @@ struct ContentView: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         .onDisappear { removeEndObserver() }
+        .onChange(of: playbackSpeed) { _, newValue in
+            guard let player else { return }
+            let rate = Float(newValue)
+            player.defaultRate = rate
+            if player.rate != 0 { player.rate = rate }
+        }
     }
 
     @ViewBuilder
@@ -441,6 +468,7 @@ struct ContentView: View {
             handlePlaybackEnded(of: video)
         }
 
+        newPlayer.defaultRate = Float(playbackSpeed)
         newPlayer.play()
     }
 
