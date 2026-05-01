@@ -64,13 +64,19 @@ final class LibraryViewModel {
     var currentlyPlayingID: UUID? = nil
     var hasOpenedFolder: Bool = false
     var isLoading: Bool = false
+    private var scopedAccessURL: URL?
 
     private static let videoExtensions: Set<String> = [
         "mp4", "mov", "m4v", "avi", "mkv", "wmv", "ts", "mpg", "mpeg"
     ]
 
     @MainActor
-    func loadFolder(_ url: URL) async {
+    func loadFolder(_ url: URL, scopedAccessGranted: Bool = false) async {
+        if let prev = scopedAccessURL, prev != url {
+            prev.stopAccessingSecurityScopedResource()
+        }
+        scopedAccessURL = scopedAccessGranted ? url : nil
+
         isLoading = true
         hasOpenedFolder = true
         let watchedSnapshot = WatchedStore.shared.snapshot()
@@ -79,6 +85,18 @@ final class LibraryViewModel {
         }.value
         self.rootItems = items
         isLoading = false
+    }
+
+    @MainActor
+    func closeFolder() {
+        if let prev = scopedAccessURL {
+            prev.stopAccessingSecurityScopedResource()
+            scopedAccessURL = nil
+        }
+        rootItems = []
+        hasOpenedFolder = false
+        isLoading = false
+        currentlyPlayingID = nil
     }
 
     private static func buildFileTree(from url: URL, watched: Set<String>) -> [FileItem] {
@@ -253,7 +271,7 @@ private struct PlayerView: NSViewRepresentable {
     }
 }
 
-private struct FolderDropTarget: ViewModifier {
+struct FolderDropTarget: ViewModifier {
     @Binding var isTargeted: Bool
     let onDrop: ([URL]) -> Bool
 
@@ -294,6 +312,30 @@ struct ContentView: View {
     }
 
     var body: some View {
+        Group {
+            if library.hasOpenedFolder {
+                splitView
+            } else {
+                HomeView(
+                    library: library,
+                    onOpenFolder: selectFolder,
+                    onOpenRecent: openRecent,
+                    onDrop: handleDrop
+                )
+            }
+        }
+        .frame(minWidth: 720, minHeight: 480)
+        .onDisappear { removeEndObserver() }
+        .onChange(of: playbackSpeed) { _, newValue in
+            guard let player else { return }
+            let rate = Float(newValue)
+            player.defaultRate = rate
+            if player.rate != 0 { player.rate = rate }
+        }
+    }
+
+    @ViewBuilder
+    private var splitView: some View {
         @Bindable var library = library
         NavigationSplitView {
             sidebar
@@ -303,6 +345,15 @@ struct ContentView: View {
         }
         .navigationTitle(currentVideo?.name ?? "Video Playlist Player")
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    goHome()
+                } label: {
+                    Label("Home", systemImage: "house")
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .help("Back to Home (⌘⇧H)")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     selectFolder()
@@ -356,14 +407,6 @@ struct ContentView: View {
                 .disabled(currentVideo == nil)
                 .help("Next Video (⌘→)")
             }
-        }
-        .frame(minWidth: 720, minHeight: 480)
-        .onDisappear { removeEndObserver() }
-        .onChange(of: playbackSpeed) { _, newValue in
-            guard let player else { return }
-            let rate = Float(newValue)
-            player.defaultRate = rate
-            if player.rate != 0 { player.rate = rate }
         }
     }
 
@@ -435,13 +478,37 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "Open"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await library.loadFolder(url) }
+        openFolder(url, scopedAccessGranted: false)
     }
 
     private func handleDrop(_ urls: [URL]) -> Bool {
         guard let folder = urls.first(where: isDirectory) else { return false }
-        Task { await library.loadFolder(folder) }
+        openFolder(folder, scopedAccessGranted: false)
         return true
+    }
+
+    private func openRecent(_ folder: RecentFolder) {
+        guard let resolved = RecentFoldersStore.shared.resolve(folder) else { return }
+        let didStart = resolved.url.startAccessingSecurityScopedResource()
+        if resolved.needsRefresh {
+            RecentFoldersStore.shared.refreshBookmark(for: folder.id, using: resolved.url)
+        }
+        openFolder(resolved.url, scopedAccessGranted: didStart)
+    }
+
+    private func openFolder(_ url: URL, scopedAccessGranted: Bool) {
+        Task {
+            await library.loadFolder(url, scopedAccessGranted: scopedAccessGranted)
+            RecentFoldersStore.shared.record(url: url)
+        }
+    }
+
+    private func goHome() {
+        removeEndObserver()
+        player?.pause()
+        player = nil
+        currentVideo = nil
+        library.closeFolder()
     }
 
     private func isDirectory(_ url: URL) -> Bool {
