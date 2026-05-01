@@ -31,12 +31,16 @@ final class FileItem: Identifiable, Hashable {
 @Observable
 final class WatchedStore {
     static let shared = WatchedStore()
-    private let key = "watchedPaths.v1"
+    private let watchedKey = "watchedPaths.v1"
+    private let progressKey = "videoProgress.v1"
     private(set) var watched: Set<String>
+    private(set) var progress: [String: Double]
 
     init() {
-        let arr = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let arr = UserDefaults.standard.stringArray(forKey: watchedKey) ?? []
         self.watched = Set(arr)
+        let stored = UserDefaults.standard.dictionary(forKey: progressKey) as? [String: Double] ?? [:]
+        self.progress = stored
     }
 
     func snapshot() -> Set<String> { watched }
@@ -49,10 +53,29 @@ final class WatchedStore {
         let path = url.standardizedFileURL.path
         if value {
             watched.insert(path)
+            if progress.removeValue(forKey: path) != nil {
+                UserDefaults.standard.set(progress, forKey: progressKey)
+            }
         } else {
             watched.remove(path)
         }
-        UserDefaults.standard.set(Array(watched), forKey: key)
+        UserDefaults.standard.set(Array(watched), forKey: watchedKey)
+    }
+
+    func progress(for url: URL) -> Double? {
+        progress[url.standardizedFileURL.path]
+    }
+
+    func setProgress(_ url: URL, seconds: Double) {
+        let path = url.standardizedFileURL.path
+        progress[path] = seconds
+        UserDefaults.standard.set(progress, forKey: progressKey)
+    }
+
+    func clearProgress(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        guard progress.removeValue(forKey: path) != nil else { return }
+        UserDefaults.standard.set(progress, forKey: progressKey)
     }
 }
 
@@ -373,6 +396,7 @@ struct ContentView: View {
     @State private var library = LibraryViewModel()
     @State private var player: AVPlayer?
     @State private var endObserver: NSObjectProtocol?
+    @State private var timeObserver: Any?
     @State private var currentVideo: FileItem?
     @State private var isSidebarDropTargeted: Bool = false
     @State private var isDetailDropTargeted: Bool = false
@@ -401,7 +425,10 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 480)
-        .onDisappear { removeEndObserver() }
+        .onDisappear {
+            persistCurrentProgress()
+            removePlaybackObservers()
+        }
         .onChange(of: playbackSpeed) { _, newValue in
             guard let player else { return }
             let rate = Float(newValue)
@@ -591,7 +618,8 @@ struct ContentView: View {
     }
 
     private func goHome() {
-        removeEndObserver()
+        persistCurrentProgress()
+        removePlaybackObservers()
         player?.pause()
         player = nil
         currentVideo = nil
@@ -606,7 +634,8 @@ struct ContentView: View {
         guard video.type == .video else { return }
         guard video.id != library.currentlyPlayingID else { return }
 
-        removeEndObserver()
+        persistCurrentProgress()
+        removePlaybackObservers()
         player?.pause()
 
         let newPlayer = AVPlayer(url: video.url)
@@ -620,6 +649,18 @@ struct ContentView: View {
             queue: .main
         ) { _ in
             handlePlaybackEnded(of: video)
+        }
+
+        let interval = CMTime(seconds: 2, preferredTimescale: 1)
+        timeObserver = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            let seconds = time.seconds
+            guard seconds.isFinite, seconds > 3 else { return }
+            WatchedStore.shared.setProgress(video.url, seconds: seconds)
+        }
+
+        if let saved = WatchedStore.shared.progress(for: video.url), saved > 0 {
+            let target = CMTime(seconds: saved, preferredTimescale: 1000)
+            newPlayer.currentItem?.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: nil)
         }
 
         newPlayer.defaultRate = Float(playbackSpeed)
@@ -643,10 +684,21 @@ struct ContentView: View {
         playVideo(previous)
     }
 
-    private func removeEndObserver() {
+    private func removePlaybackObservers() {
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
         }
         endObserver = nil
+        if let timeObserver {
+            player?.removeTimeObserver(timeObserver)
+        }
+        timeObserver = nil
+    }
+
+    private func persistCurrentProgress() {
+        guard let player, let video = currentVideo else { return }
+        let seconds = player.currentTime().seconds
+        guard seconds.isFinite, seconds > 3 else { return }
+        WatchedStore.shared.setProgress(video.url, seconds: seconds)
     }
 }
