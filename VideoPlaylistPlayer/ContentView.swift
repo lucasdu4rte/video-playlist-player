@@ -237,18 +237,33 @@ struct FileRow: View {
 private struct PlayerView: NSViewRepresentable {
     let player: AVPlayer
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.player = player
         view.controlsStyle = .inline
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = true
+        view.delegate = context.coordinator
         return view
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
         if nsView.player !== player {
             nsView.player = player
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, AVPlayerViewDelegate {
+        func playerViewDidStopPictureInPicture(_ playerView: AVPlayerView) {
+            NSApp.activate()
+            if let window = playerView.window ?? NSApp.windows.first(where: { $0.canBecomeKey }) {
+                window.makeKeyAndOrderFront(nil)
+            }
         }
     }
 }
