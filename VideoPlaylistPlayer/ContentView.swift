@@ -235,6 +235,21 @@ final class LibraryViewModel {
         return videos[idx - 1]
     }
 
+    @discardableResult
+    func expandAncestors(of target: FileItem) -> Bool {
+        func walk(_ items: [FileItem]) -> Bool {
+            for item in items {
+                if item.id == target.id { return true }
+                if item.type == .folder, let children = item.children, walk(children) {
+                    item.isExpanded = true
+                    return true
+                }
+            }
+            return false
+        }
+        return walk(rootItems)
+    }
+
     func subtreeHasUnwatchedVideo(_ item: FileItem) -> Bool {
         switch item.type {
         case .video:
@@ -738,6 +753,10 @@ struct ContentView: View {
     private func playVideo(_ video: FileItem, autoPlay: Bool = true) {
         guard video.type == .video else { return }
         guard video.id != library.currentlyPlayingID else { return }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            library.expandAncestors(of: video)
+        }
 
         persistCurrentProgress()
         removePlaybackObservers()
