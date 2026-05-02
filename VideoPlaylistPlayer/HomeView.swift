@@ -9,6 +9,7 @@ struct HomeView: View {
     @State private var store = RecentFoldersStore.shared
     @State private var currentPage: Int = 0
     @State private var unavailableAlertFolder: RecentFolder?
+    @State private var removalCandidate: RemovalCandidate?
     @State private var isDropTargeted: Bool = false
 
     private static let columns: [GridItem] = Array(
@@ -33,12 +34,26 @@ struct HomeView: View {
             presenting: unavailableAlertFolder
         ) { folder in
             Button("Remove from Recents", role: .destructive) {
-                store.remove(id: folder.id)
-                clampPage()
+                requestRemove(folder)
             }
             Button("Keep", role: .cancel) {}
         } message: { folder in
             Text("\u{201C}\(folder.name)\u{201D} can\u{2019}t be opened. The disk may be disconnected, the folder may have been moved or deleted, or access was revoked.")
+        }
+        .alert(
+            "Remove from Recents?",
+            isPresented: Binding(
+                get: { removalCandidate != nil },
+                set: { if !$0 { removalCandidate = nil } }
+            ),
+            presenting: removalCandidate
+        ) { candidate in
+            Button("Remove", role: .destructive) {
+                performRemove(candidate.folder)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { candidate in
+            Text(removalMessage(for: candidate))
         }
     }
 
@@ -86,10 +101,7 @@ struct HomeView: View {
                                 folder: folder,
                                 isAvailable: isAvailable(folder),
                                 onOpen: { handleOpen(folder) },
-                                onRemove: {
-                                    store.remove(id: folder.id)
-                                    clampPage()
-                                },
+                                onRemove: { requestRemove(folder) },
                                 onRevealInFinder: { revealInFinder(folder) }
                             )
                         }
@@ -174,6 +186,48 @@ struct HomeView: View {
     private func clampPage() {
         currentPage = max(0, min(currentPage, store.pageCount - 1))
     }
+
+    private func requestRemove(_ folder: RecentFolder) {
+        let watched = WatchedStore.shared.watchedCount(under: folder.path)
+        let notes = NotesStore.shared.notesCount(under: folder.path)
+        if watched == 0 && notes == 0 {
+            performRemove(folder)
+        } else {
+            removalCandidate = RemovalCandidate(
+                folder: folder,
+                watchedCount: watched,
+                notesCount: notes
+            )
+        }
+    }
+
+    private func performRemove(_ folder: RecentFolder) {
+        WatchedStore.shared.removeAll(under: folder.path)
+        NotesStore.shared.removeAll(under: folder.path)
+        store.remove(id: folder.id)
+        clampPage()
+    }
+
+    private func removalMessage(for candidate: RemovalCandidate) -> String {
+        var parts: [String] = []
+        if candidate.watchedCount > 0 {
+            let label = candidate.watchedCount == 1 ? "watched mark" : "watched marks"
+            parts.append("\(candidate.watchedCount) \(label)")
+        }
+        if candidate.notesCount > 0 {
+            let label = candidate.notesCount == 1 ? "note" : "notes"
+            parts.append("\(candidate.notesCount) \(label)")
+        }
+        let summary = parts.joined(separator: " and ")
+        return "Removing \u{201C}\(candidate.folder.name)\u{201D} will also delete \(summary) saved for videos in this folder. This can\u{2019}t be undone."
+    }
+}
+
+private struct RemovalCandidate: Identifiable {
+    let folder: RecentFolder
+    let watchedCount: Int
+    let notesCount: Int
+    var id: UUID { folder.id }
 }
 
 private struct RecentFolderCard: View {

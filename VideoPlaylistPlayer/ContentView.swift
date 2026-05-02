@@ -77,6 +77,27 @@ final class WatchedStore {
         guard progress.removeValue(forKey: path) != nil else { return }
         UserDefaults.standard.set(progress, forKey: progressKey)
     }
+
+    func watchedCount(under folderPath: String) -> Int {
+        let prefix = folderPath + "/"
+        return watched.reduce(0) { $1.hasPrefix(prefix) ? $0 + 1 : $0 }
+    }
+
+    func removeAll(under folderPath: String) {
+        let prefix = folderPath + "/"
+        let watchedToRemove = watched.filter { $0.hasPrefix(prefix) }
+        if !watchedToRemove.isEmpty {
+            watched.subtract(watchedToRemove)
+            UserDefaults.standard.set(Array(watched), forKey: watchedKey)
+        }
+        let progressKeysToRemove = progress.keys.filter { $0.hasPrefix(prefix) }
+        if !progressKeysToRemove.isEmpty {
+            for key in progressKeysToRemove {
+                progress.removeValue(forKey: key)
+            }
+            UserDefaults.standard.set(progress, forKey: progressKey)
+        }
+    }
 }
 
 @Observable
@@ -102,6 +123,21 @@ final class NotesStore {
             notes.removeValue(forKey: path)
         } else {
             notes[path] = text
+        }
+        defaults.set(notes, forKey: key)
+    }
+
+    func notesCount(under folderPath: String) -> Int {
+        let prefix = folderPath + "/"
+        return notes.keys.reduce(0) { $1.hasPrefix(prefix) ? $0 + 1 : $0 }
+    }
+
+    func removeAll(under folderPath: String) {
+        let prefix = folderPath + "/"
+        let keysToRemove = notes.keys.filter { $0.hasPrefix(prefix) }
+        guard !keysToRemove.isEmpty else { return }
+        for noteKey in keysToRemove {
+            notes.removeValue(forKey: noteKey)
         }
         defaults.set(notes, forKey: key)
     }
