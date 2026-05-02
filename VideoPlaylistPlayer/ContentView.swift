@@ -260,6 +260,12 @@ struct FileRow: View {
                 Label(item.name, systemImage: item.isExpanded ? "folder.fill" : "folder")
                     .foregroundStyle(.tint)
                     .lineLimit(1)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            item.isExpanded.toggle()
+                        }
+                    }
             }
         } else {
             HStack(spacing: 6) {
@@ -369,6 +375,57 @@ private struct NotesPanel: View {
     }
 }
 
+private struct WatchedAgainBanner: View {
+    let video: FileItem
+    let hasNext: Bool
+    let onRestart: () -> Void
+    let onSkip: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Already watched")
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(video.name)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                Button("Next video", action: onSkip)
+                    .disabled(!hasNext)
+                Button("Watch from start", action: onRestart)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.large)
+            .fixedSize()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+    }
+}
+
 struct FolderDropTarget: ViewModifier {
     @Binding var isTargeted: Bool
     let onDrop: ([URL]) -> Bool
@@ -398,6 +455,7 @@ struct ContentView: View {
     @State private var endObserver: NSObjectProtocol?
     @State private var timeObserver: Any?
     @State private var currentVideo: FileItem?
+    @State private var pendingWatchedVideo: FileItem?
     @State private var isSidebarDropTargeted: Bool = false
     @State private var isDetailDropTargeted: Bool = false
     @State private var showingNotes: Bool = false
@@ -445,6 +503,18 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 300, max: 480)
         } detail: {
             detail
+                .overlay(alignment: .top) {
+                    if let pending = pendingWatchedVideo {
+                        WatchedAgainBanner(
+                            video: pending,
+                            hasNext: library.video(after: pending) != nil,
+                            onRestart: { restartFromBeginning(pending) },
+                            onSkip: { skipPendingToNext(pending) }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: pendingWatchedVideo?.id)
                 .inspector(isPresented: $showingNotes) {
                     NotesPanel(video: currentVideo)
                         .inspectorColumnWidth(min: 240, ideal: 320, max: 520)
@@ -549,7 +619,7 @@ struct ContentView: View {
         } else {
             List {
                 ForEach(filteredRoot) { item in
-                    FileRow(item: item, library: library, onPlay: playVideo)
+                    FileRow(item: item, library: library, onPlay: handleVideoTap)
                 }
             }
             .listStyle(.sidebar)
@@ -623,6 +693,7 @@ struct ContentView: View {
         player?.pause()
         player = nil
         currentVideo = nil
+        pendingWatchedVideo = nil
         library.closeFolder()
     }
 
@@ -630,7 +701,41 @@ struct ContentView: View {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
-    private func playVideo(_ video: FileItem) {
+    private func handleVideoTap(_ video: FileItem) {
+        guard video.type == .video else { return }
+        if video.isWatched {
+            pendingWatchedVideo = video
+            playVideo(video, autoPlay: false)
+        } else {
+            pendingWatchedVideo = nil
+            playVideo(video)
+        }
+    }
+
+    private func restartFromBeginning(_ video: FileItem) {
+        library.markAsUnwatched(video)
+        WatchedStore.shared.clearProgress(video.url)
+        pendingWatchedVideo = nil
+        if library.currentlyPlayingID == video.id, let player {
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.rate = Float(playbackSpeed)
+        } else {
+            playVideo(video)
+        }
+    }
+
+    private func skipPendingToNext(_ video: FileItem) {
+        pendingWatchedVideo = nil
+        guard let next = library.video(after: video) else { return }
+        if next.isWatched {
+            pendingWatchedVideo = next
+            playVideo(next, autoPlay: false)
+        } else {
+            playVideo(next)
+        }
+    }
+
+    private func playVideo(_ video: FileItem, autoPlay: Bool = true) {
         guard video.type == .video else { return }
         guard video.id != library.currentlyPlayingID else { return }
 
@@ -655,16 +760,19 @@ struct ContentView: View {
         timeObserver = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
             let seconds = time.seconds
             guard seconds.isFinite, seconds > 3 else { return }
+            guard !video.isWatched else { return }
             WatchedStore.shared.setProgress(video.url, seconds: seconds)
         }
 
-        if let saved = WatchedStore.shared.progress(for: video.url), saved > 0 {
+        if autoPlay, let saved = WatchedStore.shared.progress(for: video.url), saved > 0 {
             let target = CMTime(seconds: saved, preferredTimescale: 1000)
             newPlayer.currentItem?.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: nil)
         }
 
         newPlayer.defaultRate = Float(playbackSpeed)
-        newPlayer.play()
+        if autoPlay {
+            newPlayer.play()
+        }
     }
 
     private func handlePlaybackEnded(of video: FileItem) {
@@ -676,12 +784,12 @@ struct ContentView: View {
 
     private func playNext() {
         guard let current = currentVideo, let next = library.video(after: current) else { return }
-        playVideo(next)
+        handleVideoTap(next)
     }
 
     private func playPrevious() {
         guard let current = currentVideo, let previous = library.video(before: current) else { return }
-        playVideo(previous)
+        handleVideoTap(previous)
     }
 
     private func removePlaybackObservers() {
@@ -697,6 +805,7 @@ struct ContentView: View {
 
     private func persistCurrentProgress() {
         guard let player, let video = currentVideo else { return }
+        guard !video.isWatched else { return }
         let seconds = player.currentTime().seconds
         guard seconds.isFinite, seconds > 3 else { return }
         WatchedStore.shared.setProgress(video.url, seconds: seconds)
