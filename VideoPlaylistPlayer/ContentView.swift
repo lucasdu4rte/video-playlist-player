@@ -34,6 +34,7 @@ final class WatchedStore {
     private let watchedKey = "watchedPaths.v1"
     private let progressKey = "videoProgress.v1"
     private(set) var watched: Set<String>
+    @ObservationIgnored
     private(set) var progress: [String: Double]
 
     init() {
@@ -360,11 +361,39 @@ struct FileRow: View {
     }
 }
 
+final class ClickToggleAVPlayerView: AVPlayerView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        installClickRecognizer()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        installClickRecognizer()
+    }
+
+    private func installClickRecognizer() {
+        let recognizer = NSClickGestureRecognizer(target: self, action: #selector(togglePlayback))
+        recognizer.numberOfClicksRequired = 1
+        recognizer.delaysPrimaryMouseButtonEvents = false
+        addGestureRecognizer(recognizer)
+    }
+
+    @objc private func togglePlayback() {
+        guard let player else { return }
+        if player.rate == 0 {
+            player.play()
+        } else {
+            player.pause()
+        }
+    }
+}
+
 private struct PlayerView: NSViewRepresentable {
     let player: AVPlayer
 
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
+    func makeNSView(context: Context) -> ClickToggleAVPlayerView {
+        let view = ClickToggleAVPlayerView()
         view.player = player
         view.controlsStyle = .inline
         view.showsFullScreenToggleButton = true
@@ -372,7 +401,7 @@ private struct PlayerView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+    func updateNSView(_ nsView: ClickToggleAVPlayerView, context: Context) {
         if nsView.player !== player {
             nsView.player = player
         }
@@ -811,12 +840,15 @@ struct ContentView: View {
             handlePlaybackEnded(of: video)
         }
 
-        let interval = CMTime(seconds: 2, preferredTimescale: 1)
-        timeObserver = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+        let interval = CMTime(seconds: 5, preferredTimescale: 1)
+        let videoURL = video.url
+        timeObserver = newPlayer.addPeriodicTimeObserver(
+            forInterval: interval,
+            queue: DispatchQueue.global(qos: .utility)
+        ) { time in
             let seconds = time.seconds
             guard seconds.isFinite, seconds > 3 else { return }
-            guard !video.isWatched else { return }
-            WatchedStore.shared.setProgress(video.url, seconds: seconds)
+            Self.writeProgressDirectly(url: videoURL, seconds: seconds)
         }
 
         if autoPlay, let saved = WatchedStore.shared.progress(for: video.url), saved > 0 {
@@ -864,5 +896,13 @@ struct ContentView: View {
         let seconds = player.currentTime().seconds
         guard seconds.isFinite, seconds > 3 else { return }
         WatchedStore.shared.setProgress(video.url, seconds: seconds)
+    }
+
+    private static func writeProgressDirectly(url: URL, seconds: Double) {
+        let path = url.standardizedFileURL.path
+        let defaults = UserDefaults.standard
+        var dict = (defaults.dictionary(forKey: "videoProgress.v1") as? [String: Double]) ?? [:]
+        dict[path] = seconds
+        defaults.set(dict, forKey: "videoProgress.v1")
     }
 }
