@@ -529,11 +529,39 @@ struct FolderDropTarget: ViewModifier {
     }
 }
 
+final class DisplaySleepBlocker {
+    private var token: NSObjectProtocol?
+
+    func update(isPlaying: Bool) {
+        if isPlaying {
+            activate()
+        } else {
+            deactivate()
+        }
+    }
+
+    func deactivate() {
+        guard let token else { return }
+        ProcessInfo.processInfo.endActivity(token)
+        self.token = nil
+    }
+
+    private func activate() {
+        guard token == nil else { return }
+        token = ProcessInfo.processInfo.beginActivity(
+            options: .idleDisplaySleepDisabled,
+            reason: "Playing video"
+        )
+    }
+}
+
 struct ContentView: View {
     @State private var library = LibraryViewModel()
     @State private var player: AVPlayer?
     @State private var endObserver: NSObjectProtocol?
     @State private var timeObserver: Any?
+    @State private var timeControlObserver: NSKeyValueObservation?
+    @State private var displayBlocker = DisplaySleepBlocker()
     @State private var currentVideo: FileItem?
     @State private var pendingWatchedVideo: FileItem?
     @State private var isSidebarDropTargeted: Bool = false
@@ -840,6 +868,12 @@ struct ContentView: View {
             handlePlaybackEnded(of: video)
         }
 
+        let blocker = displayBlocker
+        timeControlObserver = newPlayer.observe(\.timeControlStatus) { player, _ in
+            let isPlaying = player.timeControlStatus == .playing
+            DispatchQueue.main.async { blocker.update(isPlaying: isPlaying) }
+        }
+
         let interval = CMTime(seconds: 5, preferredTimescale: 1)
         let videoURL = video.url
         timeObserver = newPlayer.addPeriodicTimeObserver(
@@ -888,6 +922,9 @@ struct ContentView: View {
             player?.removeTimeObserver(timeObserver)
         }
         timeObserver = nil
+        timeControlObserver?.invalidate()
+        timeControlObserver = nil
+        displayBlocker.deactivate()
     }
 
     private func persistCurrentProgress() {
