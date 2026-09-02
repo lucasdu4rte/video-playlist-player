@@ -30,6 +30,8 @@ npm run tauri build
 
 Tauri does not cross-compile the webview — build the Windows binary on Windows. See [tauri/README.md](tauri/README.md) for the stack and layout.
 
+Every push to `main` publishes a [release](https://github.com/lucasdu4rte/video-playlist-player/releases) with a macOS `.dmg` (universal) and a Windows `.msi`. Linux is supported but has no prebuilt artifact — build it from source with the commands above.
+
 ## Shortcuts
 
 | Action              | Shortcut         |

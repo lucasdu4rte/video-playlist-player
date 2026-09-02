@@ -42,6 +42,20 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
 
+      # Created here, once, so the parallel build jobs only ever upload to an
+      # existing release — two of them racing to create it would fail one leg.
+      # It stays a draft (invisible to users) until every platform has uploaded.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --draft \
+            --title "Video Playlist Player $VERSION" \
+            --generate-notes
+
   build:
     needs: version
     strategy:
@@ -86,12 +100,33 @@ jobs:
         run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
+        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: tauri
-          tagName: ${{ needs.version.outputs.tag }}
-          releaseName: Video Playlist Player ${{ needs.version.outputs.version }}
-          releaseDraft: false
-          prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Upload bundles to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: |
+          node -e "JSON.parse(process.env.ARTIFACTS).forEach((p) => console.log(p))" |
+            while IFS= read -r artifact; do
+              gh release upload "$TAG" "$artifact" --clobber
+            done
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      # Only reached when every matrix leg uploaded, so the release never goes
+      # public missing a platform's installer.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false -R "$GITHUB_REPOSITORY"
