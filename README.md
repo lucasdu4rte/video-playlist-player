@@ -1,58 +1,48 @@
 # Video Playlist Player
 
-A native macOS app for watching folders of videos as a playlist, while keeping track of what you've already seen. Designed for working through courses, series, or any collection of video files organized in directories.
+A desktop app (macOS / Windows / Linux) for watching folders of videos as a playlist, while keeping track of what you've already seen. Designed for working through courses, series, or any collection of video files organized in directories.
 
 ## Features
 
 - Open any local folder and recursively list every video in a navigable sidebar tree
-- Native playback via `AVKit`
 - Auto-marks videos as watched when playback finishes
-- Manual mark/unmark via context menu (with "Reveal in Finder")
+- Manual mark/unmark via context menu (with "Reveal in Finder/Explorer")
 - Autoplay the next unwatched video in natural folder order
-- Navigate between videos via toolbar or shortcuts (`⌘←` / `⌘→`)
-- "Hide Watched" filter that hides individual videos and entire fully-watched folders
-- Watched state persists across sessions
+- Per-video notes panel
+- Resume where you stopped, and a "Hide Watched" filter that hides individual videos and entire fully-watched folders
+- Recent folders on the home screen; watched state, progress and notes persist across sessions
 
 Supported formats: `mp4`, `mov`, `m4v`, `avi`, `mkv`, `wmv`, `ts`, `mpg`, `mpeg`.
 
-## Requirements
-
-- macOS 15.4 or newer
-- Xcode 16+ (Swift 5)
-
 ## Running
 
-From Xcode:
-
-```sh
-open VideoPlaylistPlayer.xcodeproj
+```bash
+cd tauri
+npm install
+npm run tauri dev
 ```
 
-Pick the `VideoPlaylistPlayer` scheme and run with `⌘R`.
+To produce a bundle (`.app`/`.dmg` on macOS, `.msi`/`.exe` on Windows):
 
-From the command line:
-
-```sh
-xcodebuild -project VideoPlaylistPlayer.xcodeproj \
-           -scheme VideoPlaylistPlayer \
-           -configuration Debug build
+```bash
+npm run tauri build
 ```
 
-## Usage
+Tauri does not cross-compile the webview — build the Windows binary on Windows. See [tauri/README.md](tauri/README.md) for the stack and layout.
 
-1. Click **Open Folder** in the toolbar (or `⌘O`) and pick the root directory
-2. Expand folders in the sidebar and click any video to start playing
-3. Use the toolbar toggles for **Hide Watched** and **Autoplay Next**
-4. Right-click a video to mark/unmark it manually
+Every push to `main` publishes a [release](https://github.com/lucasdu4rte/video-playlist-player/releases) with a macOS `.dmg` (universal) and a Windows `.msi`. Linux is supported but has no prebuilt artifact — build it from source with the commands above.
 
 ## Shortcuts
 
-| Action          | Shortcut |
-| --------------- | -------- |
-| Open folder     | `⌘O`     |
-| Next video      | `⌘→`     |
-| Previous video  | `⌘←`     |
+| Action              | Shortcut         |
+| ------------------- | ---------------- |
+| Open folder         | `⌘O` / `Ctrl+O`  |
+| Next video          | `⌘→` / `Ctrl+→`  |
+| Previous video      | `⌘←` / `Ctrl+←`  |
+| Seek back / forward | `←` / `→`        |
+| Toggle notes        | `⌘N` / `Ctrl+N`  |
+| Back to home        | `⌘⇧H` / `Ctrl+⇧H`|
 
 ## Privacy
 
-The app runs sandboxed with read-only access to the folder you pick. Nothing leaves the machine — watched state lives in local `UserDefaults`.
+Nothing leaves the machine — watched state, progress and notes live in the app's local storage, and the app only reads the folders you pick.

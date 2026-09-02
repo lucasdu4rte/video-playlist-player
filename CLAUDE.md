@@ -4,124 +4,62 @@ Technical guide for working in this project. Focused on patterns, setup, and com
 
 ## Stack
 
-- **Platform:** native macOS app (no iOS, no Catalyst)
-- **UI:** pure SwiftUI; AppKit only for narrow integrations (`NSOpenPanel`, `NSWorkspace`)
-- **Media:** `AVKit` / `AVPlayer` for playback; SwiftUI's `VideoPlayer` view in the detail pane
-- **Persistence:** `UserDefaults` for lightweight state (watched paths). No Core Data, SwiftData, or external DB
-- **Language:** Swift 5
-- **Deployment target:** macOS 15.4
-- **Build system:** plain Xcode project (`.xcodeproj`); no SPM/CocoaPods/Carthage
-- **Unit tests:** Swift Testing (`import Testing`, `@Test`, `#expect`)
-- **UI tests:** classic XCTest (`XCUIApplication`)
+- **Platform:** desktop app via Tauri v2 (macOS / Windows / Linux). Everything lives under `tauri/`
+- **Backend:** Rust, only for what the web layer can't do — `scan_folder` (recursive walk, natural sort, prunes empty folders, video-extension filter) and `path_exists`
+- **Frontend:** React 19 + TypeScript + Vite, Tailwind CSS v4, shadcn/ui components
+- **Media:** Video.js player fed by `convertFileSrc`; the skin is hand-written in `src/player-theme.css`
+- **Persistence:** `localStorage` through the stores in `src/lib/store.ts`. No DB, no Tauri store plugin
+- **Package manager:** npm (there is a `package-lock.json`; don't switch)
+- **Node version:** pinned in `tauri/.node-version` (fnm picks it up on `cd`)
 
 ## Project conventions
 
-### State management
+### State
 
-- Use `@Observable` (Observation framework) for models. **Do not** use `ObservableObject` / `@Published` / `@StateObject` — the project is on the new Observation framework
-- Models are `final class` with `@Observable`
-- In views: `@State` to instantiate the model, and `@Bindable var` inside `body` to derive bindings from properties of `@Observable` classes
-- Use singletons only when something genuinely needs to be a cross-view global store (e.g. a persisted-state store). Don't overuse them
+- App state is plain React `useState` in `App.tsx`, which owns the tree, playback and filter state and passes callbacks down. No Redux/Zustand/Context store
+- Persisted state goes through the singletons in `src/lib/store.ts` (`Watched`, `Notes`, `Recents`). They own the `localStorage` keys and the read/write JSON guard — never touch `localStorage` directly from a component
+- Mutating persisted state updates the store **and** the React state in the same handler; don't let the two drift
+- Keyboard handling is one `window` `keydown` listener registered once, reading the latest callbacks from a ref — don't re-register per render, and keep bailing out early when the event target is an input/textarea/contenteditable
 
-### Concurrency
+### Paths and the platform bridge
 
-- Filesystem I/O must run off the main thread. The pattern is `Task.detached(priority: .userInitiated)` for the recursive scan, with the scan function being `static` or pure to avoid capturing `self`
-- Methods that mutate observed state and are called from a detached task must be `@MainActor`
-- Snapshot any shared state (e.g. the `Set<String>` of watched paths) **before** hopping to the background thread, and pass the immutable snapshot into the scan. Don't read shared stores from inside background work
+- Every native call goes through `src/lib/platform.ts`. Components import from there, never from `@tauri-apps/*` directly
+- That module degrades to a demo tree when `isTauri` is false (a plain browser), so the UI can be iterated without rebuilding the desktop app. Keep new bridge functions following the same shape
+- Paths are opaque strings from Rust: backslash-separated on Windows, forward-slash elsewhere. Decide the separator once from the platform (as `store.ts` does) — never sniff it per path
+- Video extensions are checked lowercased against the `VIDEO_EXTS` constant in `src-tauri/src/lib.rs`. Adding a format means touching that list
 
-### AVPlayer lifecycle
+### Tree helpers
 
-- Whenever you switch videos: `pause()` the previous player, **remove the `AVPlayerItemDidPlayToEndTime` observer**, build a fresh `AVPlayer(url:)`, register a new observer, and only then call `play()`
-- Hold the observer as `@State` (`NSObjectProtocol`) and remove it in `onDisappear` of the root view
-- "Mark as watched" happens inside the playback-ended callback, before deciding whether to advance to the next item
+- Tree walking (next video, next unwatched, "does this folder have unwatched", hide-watched filtering) belongs in `src/lib/tree.ts`, not in components
+- Filters like "hide watched" are **computed** over the scanned roots, not destructive mutations — the tree stays intact and the view filters at render time
 
-### Filesystem
+### UI
 
-- Use `URL` (not `String`) for paths. Normalize with `.standardizedFileURL.path` before comparing or persisting
-- To list a directory: `FileManager.default.contentsOfDirectory(at:includingPropertiesForKeys:options:)` with `[.skipsHiddenFiles, .skipsPackageDescendants]`, and read `.isDirectoryKey` / `.isPackageKey` via `resourceValues(forKeys:)` — don't infer "is folder" from the extension
-- Listings are sorted with `localizedStandardCompare` (Finder-style natural ordering with numbers)
-- Video extensions are checked lowercased against a constant `Set<String>`
+- shadcn/ui components live in `src/components/ui/`. Add new ones with the shadcn CLI rather than hand-rolling; the config is in `components.json`
+- Tailwind v4: the theme lives in `src/index.css` (`@theme`), there is no `tailwind.config.js`
+- Imports use the `@/` alias for `src/`
 
-### Sandbox
+### Tauri config
 
-- The app is sandbox-enabled with `com.apple.security.files.user-selected.read-only`. File access **only** through `NSOpenPanel` — any feature that needs to write to disk or read arbitrary paths will fail silently until the entitlement is widened
-- Don't add network or hardware entitlements without a clear reason
-
-### View composition
-
-- `NavigationSplitView` (sidebar + detail) is the canonical layout
-- Empty states use `ContentUnavailableView` — don't roll a custom one
-- Toolbar shortcuts: `.keyboardShortcut(_:modifiers:)` directly on the `ToolbarItem`'s button. Pair with `.help(_:)` for the tooltip
-- Folder hierarchy uses `DisclosureGroup` with `isExpanded` bound directly to the item (`@Bindable var item`)
-
-### Filters and derivations
-
-- Filters like "hide watched" are **computed** over `rootItems`, not destructive mutations. The model tree stays intact; the view filters at render time
-- "Does this folder have any unwatched video?" is recursive over `children` — watch performance on large trees (cache only after measuring, not preemptively)
+- Window, CSP and bundle settings are in `src-tauri/tauri.conf.json`. The asset protocol is enabled so local files can play — widening its scope or the CSP needs a real reason
+- Rust permissions live in `src-tauri/capabilities/`
 
 ## Useful commands
 
-### Build
+All commands run from `tauri/`.
 
 ```sh
-# Debug build from CLI
-xcodebuild -project VideoPlaylistPlayer.xcodeproj \
-           -scheme VideoPlaylistPlayer \
-           -configuration Debug build
-
-# Release build
-xcodebuild -project VideoPlaylistPlayer.xcodeproj \
-           -scheme VideoPlaylistPlayer \
-           -configuration Release build
-
-# Clean
-xcodebuild -project VideoPlaylistPlayer.xcodeproj \
-           -scheme VideoPlaylistPlayer clean
+npm install          # first time only
+npm run tauri dev    # native window with HMR
+npm run tauri build  # .app/.dmg (macOS) or .msi/.exe (Windows)
+npm run build        # Vite build only (no native bundle)
+npm run preview      # serve the built frontend in a browser (demo-tree mode)
 ```
 
-### Tests
-
-```sh
-# Run all tests (unit + UI) on the default Mac destination
-xcodebuild test -project VideoPlaylistPlayer.xcodeproj \
-                -scheme VideoPlaylistPlayer \
-                -destination 'platform=macOS'
-
-# Unit tests only
-xcodebuild test -project VideoPlaylistPlayer.xcodeproj \
-                -scheme VideoPlaylistPlayer \
-                -destination 'platform=macOS' \
-                -only-testing:VideoPlaylistPlayerTests
-```
-
-### Distribution
-
-```sh
-# Archive for distribution
-xcodebuild archive -project VideoPlaylistPlayer.xcodeproj \
-                   -scheme VideoPlaylistPlayer \
-                   -archivePath build/VideoPlaylistPlayer.xcarchive
-
-# List available destinations (handy when debugging CI)
-xcodebuild -project VideoPlaylistPlayer.xcodeproj \
-           -scheme VideoPlaylistPlayer \
-           -showdestinations
-```
-
-### Quick reset
-
-```sh
-# Wipe global DerivedData (fixes most "works here but won't compile" issues)
-rm -rf ~/Library/Developer/Xcode/DerivedData
-
-# Wipe local build output
-rm -rf build/
-```
+Tauri does not cross-compile the webview: the Windows binary must be built on Windows, from the same source.
 
 ## Conventions for new code
 
-- Tree-walk helpers (next video, count unwatched, etc.) belong in the view-model, **not** inside the view
-- Operations that mutate persisted state (mark as watched) update the observed object **and** the store in a single call — don't let the two drift out of sync
-- Don't introduce external dependencies without a real need. If you do, use SPM — never CocoaPods
-- No `print` for logging. If you need logs, use `Logger` (`os.log`)
-- Keep the build warning-free. Fix any warning in the same PR that introduced it
+- Don't introduce dependencies without a real need
+- No `console.log` left behind
+- Keep the build warning-free — TypeScript and `cargo` warnings get fixed in the PR that introduced them

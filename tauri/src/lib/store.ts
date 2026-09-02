@@ -1,5 +1,3 @@
-// localStorage stand-in for the Swift app's UserDefaults stores.
-
 const KEYS = {
   watched: "watchedPaths.v1",
   progress: "videoProgress.v1",

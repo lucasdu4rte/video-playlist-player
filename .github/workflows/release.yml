@@ -12,15 +12,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: macos-15
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Show Xcode version
-        run: xcodebuild -version
 
       - name: Compute next version
         id: version
@@ -42,45 +42,91 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
 
-      - name: Build macOS archive (ad-hoc signed)
-        run: |
-          xcodebuild \
-            -project VideoPlaylistPlayer.xcodeproj \
-            -scheme VideoPlaylistPlayer \
-            -configuration Release \
-            -destination 'generic/platform=macOS' \
-            -archivePath build/VideoPlaylistPlayer.xcarchive \
-            MARKETING_VERSION=${{ steps.version.outputs.version }} \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM= \
-            archive
-
-      - name: Stage .app for DMG
-        run: |
-          mkdir -p build/export
-          cp -R build/VideoPlaylistPlayer.xcarchive/Products/Applications/VideoPlaylistPlayer.app build/export/
-
-      - name: Install create-dmg
-        run: brew install create-dmg
-
-      - name: Create DMG
-        run: |
-          chmod +x scripts/build-dmg.sh
-          scripts/build-dmg.sh "${{ steps.version.outputs.version }}"
-
-      - name: Publish GitHub Release (idempotent)
+      # Created here, once, so the parallel build jobs only ever upload to an
+      # existing release — two of them racing to create it would fail one leg.
+      # It stays a draft (invisible to users) until every platform has uploaded.
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          DMG="VideoPlaylistPlayer-${VERSION}.dmg"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$DMG" --clobber
-          else
-            gh release create "$TAG" "$DMG" \
-              --title "VideoPlaylistPlayer $VERSION" \
-              --generate-notes
-          fi
+          gh release create "$TAG" \
+            --draft \
+            --title "Video Playlist Player $VERSION" \
+            --generate-notes
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - os: windows-latest
+            rust-targets: ""
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: tauri/.node-version
+          cache: npm
+          cache-dependency-path: tauri/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tauri/src-tauri
+
+      # tauri.conf.json carries a static version; stamp the computed one so the
+      # bundle reports the same number as the tag it ships under.
+      - name: Stamp the bundle version
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          node -e "const fs=require('fs'),f='tauri/src-tauri/tauri.conf.json',c=JSON.parse(fs.readFileSync(f,'utf8'));c.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
+
+      - name: Install dependencies
+        working-directory: tauri
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: tauri
+          args: ${{ matrix.args }}
+
+      - name: Upload bundles to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
+        run: |
+          node -e "const b=JSON.parse(process.env.ARTIFACTS);if(!b.length)throw new Error('the build produced no bundles');b.forEach((p) => console.log(p))" |
+            while IFS= read -r artifact; do
+              gh release upload "$TAG" "$artifact" --clobber
+            done
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      # Only reached when every matrix leg uploaded, so the release never goes
+      # public missing a platform's installer.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false -R "$GITHUB_REPOSITORY"
