@@ -97,6 +97,9 @@ class NotesStore {
   note(path: string) {
     return this.notes[path] ?? "";
   }
+  paths(): string[] {
+    return Object.keys(this.notes);
+  }
   setNote(text: string, path: string) {
     if (text.length === 0) delete this.notes[path];
     else this.notes[path] = text;
@@ -207,6 +210,13 @@ export const Watched = new WatchedStore();
 export const Playback = new PlaybackStore();
 export const Notes = new NotesStore();
 export const Recents = new RecentFoldersStore();
+
+export function getShowDetails(): boolean {
+  return read<boolean>("showDetails.v1", true);
+}
+export function setShowDetails(value: boolean) {
+  write("showDetails.v1", value);
+}
 
 export function getSpeed(): number {
   return read<number>(KEYS.speed, 1.0);

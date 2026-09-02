@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   Home as HomeIcon,
   ChevronRight,
+  ChevronDown,
   PanelLeftOpen,
   SkipForward,
   StickyNote,
@@ -27,24 +28,24 @@ type Props = {
   video: FileNode | null;
   folderName: string;
   watched: boolean;
-  isPlaying: boolean;
+  hasNotes: boolean;
   nextVideo: FileNode | null;
   autoplayNext: boolean;
   showingNotes: boolean;
+  showDetails: boolean;
   sidebarCollapsed: boolean;
   onHome: () => void;
   onExpandSidebar: () => void;
   onNext: () => void;
   onToggleAutoplay: () => void;
   onToggleNotes: () => void;
+  onToggleDetails: () => void;
   children: ReactNode;
 };
 
 export function PlayerArea(props: Props) {
   const { video } = props;
-  // Details and the up-next strip only take space while paused, so watching
-  // keeps the full stage.
-  const showDetails = Boolean(video) && !props.isPlaying;
+  const showDetails = Boolean(video) && props.showDetails;
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col px-8 pb-5">
@@ -77,6 +78,21 @@ export function PlayerArea(props: Props) {
             </>
           )}
         </nav>
+
+        {video && (
+          <button
+            onClick={props.onToggleDetails}
+            className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {props.showDetails ? "Hide details" : "Show details"}
+            <ChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                !props.showDetails && "rotate-180"
+              )}
+            />
+          </button>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -139,6 +155,9 @@ export function PlayerArea(props: Props) {
                 )}
               >
                 <StickyNote className="size-[15px]" /> Notes
+                {props.hasNotes && (
+                  <span className="ml-1 size-1.5 rounded-full bg-primary" />
+                )}
               </Button>
             </div>
           </div>

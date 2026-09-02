@@ -4,7 +4,13 @@ import { Notes } from "@/lib/store";
 import type { FileNode } from "@/lib/platform";
 import { MiddleTruncate } from "@/components/MiddleTruncate";
 
-export function NotesPanel({ video }: { video: FileNode | null }) {
+export function NotesPanel({
+  video,
+  onNotesChange,
+}: {
+  video: FileNode | null;
+  onNotesChange: () => void;
+}) {
   const [text, setText] = useState("");
 
   useEffect(() => {
@@ -27,8 +33,12 @@ export function NotesPanel({ video }: { video: FileNode | null }) {
             placeholder="Notes…"
             value={text}
             onChange={(e) => {
+              const had = Notes.note(video.path).length > 0;
               setText(e.target.value);
               Notes.setNote(e.target.value, video.path);
+              // Only ping the parent when the note appears or disappears —
+              // that is all the sidebar marker depends on.
+              if (had !== e.target.value.length > 0) onNotesChange();
             }}
           />
         </>

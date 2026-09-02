@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   Search,
+  StickyNote,
   PanelLeftClose,
   Library,
   Inbox,
@@ -33,6 +34,7 @@ type Props = {
   isLoading: boolean;
   hideWatched: boolean;
   watched: Set<string>;
+  noted: Set<string>;
   expanded: Set<string>;
   currentPath: string | null;
   query: string;
@@ -190,6 +192,12 @@ function Row({ node, depth, ...props }: Props & { node: FileNode; depth: number 
         >
           <FileVideo2 className="size-[15px] shrink-0" />
           <MiddleTruncate text={node.name} className={cn("flex-1", playing && "font-semibold")} />
+          {props.noted.has(node.path) && (
+            <StickyNote
+              className="size-3.5 shrink-0 text-primary"
+              aria-label="Has notes"
+            />
+          )}
           {isWatched && <Check className="size-3.5 shrink-0 text-success" />}
         </button>
       </ContextMenuTrigger>

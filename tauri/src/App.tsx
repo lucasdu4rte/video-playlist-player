@@ -7,7 +7,16 @@ import {
   setWindowTitle,
   type FileNode,
 } from "@/lib/platform";
-import { Watched, Recents, Playback, getSpeed, setSpeed } from "@/lib/store";
+import {
+  Watched,
+  Notes,
+  Recents,
+  Playback,
+  getSpeed,
+  setSpeed,
+  getShowDetails,
+  setShowDetails,
+} from "@/lib/store";
 import {
   ancestorsOf,
   countVideos,
@@ -51,11 +60,12 @@ export default function App() {
   const [pendingWatched, setPendingWatched] = useState<FileNode | null>(null);
   const [showingNotes, setShowingNotes] = useState(false);
   const [speed, setSpeedState] = useState<number>(getSpeed());
-  const [isPlaying, setIsPlaying] = useState(false);
   const [query, setQuery] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showDetails, setShowDetailsState] = useState(getShowDetails());
+  const [noted, setNoted] = useState<Set<string>>(new Set(Notes.paths()));
   const [, bumpRecents] = useState(0);
 
   const currentTimeRef = useRef(0);
@@ -218,7 +228,6 @@ export default function App() {
     }
   };
   const onPlayingChange = (playing: boolean) => {
-    setIsPlaying(playing);
     if (playing) void acquireWake();
     else void releaseWake();
   };
@@ -488,6 +497,7 @@ export default function App() {
                 isLoading={isLoading}
                 hideWatched={hideWatched}
                 watched={watched}
+                noted={noted}
                 expanded={expanded}
                 currentPath={currentVideo?.path ?? null}
                 query={query}
@@ -515,16 +525,22 @@ export default function App() {
                 video={currentVideo}
                 folderName={parentFolderName(currentVideo) || rootName}
                 watched={currentVideo ? watched.has(currentVideo.path) : false}
-                isPlaying={isPlaying}
                 nextVideo={nextVideo}
                 autoplayNext={autoplayNext}
                 showingNotes={showingNotes}
+                hasNotes={currentVideo ? noted.has(currentVideo.path) : false}
+                showDetails={showDetails}
                 sidebarCollapsed={sidebarCollapsed}
                 onHome={goHome}
                 onExpandSidebar={() => sidebarPanelRef.current?.expand()}
                 onNext={playNext}
                 onToggleAutoplay={() => setAutoplayNext((v) => !v)}
                 onToggleNotes={toggleNotes}
+                onToggleDetails={() => {
+                  const next = !showDetails;
+                  setShowDetails(next);
+                  setShowDetailsState(next);
+                }}
               >
                 {currentVideo && (
                   <>
@@ -557,7 +573,10 @@ export default function App() {
             {showingNotes && <ResizableHandle key="notes-handle" />}
             {showingNotes && (
               <ResizablePanel id="notes" order={3} defaultSize={24} minSize={16} maxSize={40}>
-                <NotesPanel video={currentVideo} />
+                <NotesPanel
+                  video={currentVideo}
+                  onNotesChange={() => setNoted(new Set(Notes.paths()))}
+                />
               </ResizablePanel>
             )}
           </ResizablePanelGroup>
