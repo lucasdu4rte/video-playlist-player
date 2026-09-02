@@ -7,7 +7,7 @@ Technical guide for working in this project. Focused on patterns, setup, and com
 - **Platform:** desktop app via Tauri v2 (macOS / Windows / Linux). Everything lives under `tauri/`
 - **Backend:** Rust, only for what the web layer can't do — `scan_folder` (recursive walk, natural sort, prunes empty folders, video-extension filter) and `path_exists`
 - **Frontend:** React 19 + TypeScript + Vite, Tailwind CSS v4, shadcn/ui components
-- **Media:** Video.js player fed by `convertFileSrc`; the skin is hand-written in `src/player-theme.css`
+- **Media:** Vidstack (`@vidstack/react`) with its default video layout, fed by `convertFileSrc`. The layout ships its own aligned chrome — resist re-skinning it by hand, which is what the previous Video.js setup cost us
 - **Persistence:** `localStorage` through the stores in `src/lib/store.ts`. No DB, no Tauri store plugin
 - **Package manager:** npm (there is a `package-lock.json`; don't switch)
 - **Node version:** pinned in `tauri/.node-version` (fnm picks it up on `cd`)
@@ -38,6 +38,12 @@ Technical guide for working in this project. Focused on patterns, setup, and com
 - shadcn/ui components live in `src/components/ui/`. Add new ones with the shadcn CLI rather than hand-rolling; the config is in `components.json`
 - Tailwind v4: the theme lives in `src/index.css` (`@theme`), there is no `tailwind.config.js`
 - Imports use the `@/` alias for `src/`
+
+### Player
+
+- The control chrome comes from Vidstack's `DefaultVideoLayout`. Style it through Vidstack's own CSS variables rather than overriding its internals; the only hand-written player CSS left is the `.player-flash` badge in `index.css`, which is ours
+- `@vidstack/react`'s npm `latest` tag still points at the abandoned 0.6.15 (React 18 only). The current line ships under `next`, so keep the explicit `^1.15.6` in `package.json` — a bare `npm install @vidstack/react` installs the old one
+- `Player.tsx` keeps a stable prop API (`onEnded`, `onProgress`, `onDuration`, `onPlayingChange`, `onSpeedChange`, plus a `seekBy` handle) so the player can be swapped without touching `App.tsx`
 
 ### Tauri config
 
