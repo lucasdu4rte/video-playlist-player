@@ -50,6 +50,26 @@ export function filteredRoots(
   return roots.filter((n) => subtreeHasUnwatched(n, watched));
 }
 
+export function countVideos(node: FileNode): number {
+  if (node.type === "video") return 1;
+  return (node.children ?? []).reduce((n, c) => n + countVideos(c), 0);
+}
+
+/** Keeps videos whose name matches, and folders that still have a match under them. */
+export function searchTree(roots: FileNode[], query: string): FileNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return roots;
+  const walk = (items: FileNode[]): FileNode[] =>
+    items.flatMap((it) => {
+      if (it.type === "video")
+        return it.name.toLowerCase().includes(q) ? [it] : [];
+      const children = walk(it.children ?? []);
+      if (children.length === 0 && !it.name.toLowerCase().includes(q)) return [];
+      return [{ ...it, children: children.length ? children : it.children }];
+    });
+  return walk(roots);
+}
+
 // Ancestor folder paths that must be expanded for `target` to be visible.
 export function ancestorsOf(roots: FileNode[], target: FileNode): string[] {
   const trail: string[] = [];

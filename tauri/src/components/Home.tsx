@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import {
-  Folder,
-  FolderPlus,
-  AlertTriangle,
-  ChevronLeft,
+  FolderOpen,
+  Plus,
   ChevronRight,
+  AlertTriangle,
+  Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,15 +22,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MiddleTruncate } from "@/components/MiddleTruncate";
 import { pathExists, revealInFinder } from "@/lib/platform";
-import { Watched, Notes, Recents, type RecentFolder } from "@/lib/store";
+import {
+  Watched,
+  Notes,
+  Recents,
+  Playback,
+  type RecentFolder,
+} from "@/lib/store";
 import { cn } from "@/lib/utils";
 
+const rtf = new Intl.RelativeTimeFormat(undefined, {
+  style: "long",
+  numeric: "auto",
+});
+
 function relativeDate(ts: number) {
-  const rtf = new Intl.RelativeTimeFormat(undefined, {
-    style: "long",
-    numeric: "auto",
-  });
   const diff = (ts - Date.now()) / 1000;
   const units: [Intl.RelativeTimeFormatUnit, number][] = [
     ["year", 31536000],
@@ -43,17 +51,19 @@ function relativeDate(ts: number) {
   ];
   for (const [unit, secs] of units) {
     if (Math.abs(diff) >= secs || unit === "second")
-      return rtf.format(Math.round(diff / secs), unit);
+      return rtf.format(Math.trunc(diff / secs), unit);
   }
   return "";
 }
 
-type Props = {
-  dropping: boolean;
-  onOpenFolder: () => void;
-  onOpenPath: (path: string) => void;
-  onChanged: () => void;
-};
+function formatTime(seconds: number) {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = h ? String(m).padStart(2, "0") : String(m);
+  return `${h ? `${h}:` : ""}${mm}:${String(sec).padStart(2, "0")}`;
+}
 
 type RemoveCandidate = {
   folder: RecentFolder;
@@ -66,22 +76,28 @@ type DialogState =
   | { kind: "confirm"; candidate: RemoveCandidate }
   | null;
 
-export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
-  const [page, setPage] = useState(0);
-  // One dialog with two steps, not two dialogs: mounting a second modal while
-  // the first is still animating out leaves body pointer-events stuck at none.
+type Props = {
+  dropping: boolean;
+  onOpenFolder: () => void;
+  onOpenPath: (path: string) => void;
+  onResume: (rootPath: string, videoPath: string) => void;
+  onChanged: () => void;
+};
+
+export function Home({
+  dropping,
+  onOpenFolder,
+  onOpenPath,
+  onResume,
+  onChanged,
+}: Props) {
   const [dialog, setDialog] = useState<DialogState>(null);
 
   const folders = Recents.folders;
-  const pageCount = Recents.pageCount;
-  const clampedPage = Math.max(0, Math.min(page, pageCount - 1));
-  const count = folders.length;
-  const subtitle =
-    count === 0
-      ? "No folders yet — open one to get started."
-      : count === 1
-        ? "1 folder"
-        : `${count} folders`;
+  const last = Playback.last;
+  const subtitle = folders.length
+    ? "Your content, exactly as you left it."
+    : "Open a folder to get started.";
 
   const openFolder = async (folder: RecentFolder) => {
     if (await pathExists(folder.path)) onOpenPath(folder.path);
@@ -92,85 +108,95 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
     const w = Watched.watchedCount(folder.path);
     const n = Notes.notesCount(folder.path);
     if (w === 0 && n === 0) performRemove(folder);
-    else setDialog({ kind: "confirm", candidate: { folder, watchedCount: w, notesCount: n } });
+    else
+      setDialog({
+        kind: "confirm",
+        candidate: { folder, watchedCount: w, notesCount: n },
+      });
   };
 
   const performRemove = (folder: RecentFolder) => {
     Watched.removeAll(folder.path);
     Notes.removeAll(folder.path);
+    Playback.clearLastPlayedUnder(folder.path);
     Recents.remove(folder.id);
     setDialog(null);
     onChanged();
   };
 
   return (
-    <div className="relative flex h-full flex-col bg-background">
-      <div className="flex items-end justify-between px-8 py-6">
-        <div>
-          <h1 className="text-[26px] font-semibold">Recent Folders</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">{subtitle}</p>
-        </div>
-        <Button size="lg" onClick={onOpenFolder}>
-          <FolderPlus className="size-4" />
-          Open Folder…
-        </Button>
-      </div>
-      <div className="h-px bg-border" />
-
-      {count === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-          <Folder className="size-11 opacity-40" />
-          <div className="text-base font-semibold text-foreground">
-            No folders yet
+    <div className="relative min-h-0 flex-1 overflow-auto">
+      <div className="mx-auto max-w-[1180px] px-11 pb-20 pt-14">
+        <section className="flex items-end justify-between gap-8 pb-14">
+          <div>
+            <p className="eyebrow mb-3">Your local library</p>
+            <h1 className="text-5xl font-semibold tracking-[-0.04em]">
+              Pick up where you left off.
+            </h1>
+            <p className="mt-4 text-[17px] text-muted-foreground">
+              Open a folder and keep your whole viewing history in one place.
+            </p>
           </div>
-          <div className="max-w-96 text-sm">
-            Open a folder from the toolbar or drag one anywhere into this window.
-          </div>
-          <Button size="lg" className="mt-2" onClick={onOpenFolder}>
-            <FolderPlus className="size-4" />
-            Open Folder…
+          <Button size="lg" className="shrink-0" onClick={onOpenFolder}>
+            <Plus className="size-[18px]" />
+            Open folder
           </Button>
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex-1 overflow-auto">
-            <div className="grid grid-cols-4 gap-4 p-8">
-              {Recents.page(clampedPage).map((folder) => (
-                <RecentCard
-                  key={folder.id}
-                  folder={folder}
-                  onOpen={() => openFolder(folder)}
-                  onReveal={() => void revealInFinder(folder.path)}
-                  onRemove={() => requestRemove(folder)}
-                />
-              ))}
-            </div>
-          </div>
-          {pageCount > 1 && (
-            <div className="flex items-center justify-center gap-4 border-t bg-background/80 py-3.5">
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={clampedPage === 0}
-                onClick={() => setPage(clampedPage - 1)}
+        </section>
+
+        <SectionHeading
+          title="Recent folders"
+          hint={subtitle}
+          action={
+            folders.length > 1 ? (
+              <button
+                className="flex items-center gap-1 text-[13px] text-primary"
+                onClick={() => void openFolder(folders[0])}
               >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <span className="min-w-28 text-center text-sm tabular-nums text-muted-foreground">
-                Page {clampedPage + 1} of {pageCount}
-              </span>
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={clampedPage >= pageCount - 1}
-                onClick={() => setPage(clampedPage + 1)}
-              >
-                <ChevronRight className="size-4" />
-              </Button>
-            </div>
-          )}
+                Open latest <ChevronRight className="size-[15px]" />
+              </button>
+            ) : null
+          }
+        />
+
+        <div className="grid grid-cols-2 gap-4">
+          {folders.map((folder) => (
+            <RecentCard
+              key={folder.id}
+              folder={folder}
+              onOpen={() => void openFolder(folder)}
+              onReveal={() => void revealInFinder(folder.path)}
+              onRemove={() => requestRemove(folder)}
+            />
+          ))}
+
+          <button
+            onClick={onOpenFolder}
+            className="flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-card p-[18px] transition-colors hover:border-primary/50"
+          >
+            <span className="grid size-12 place-items-center rounded-full border border-dashed text-primary">
+              <Plus className="size-5" />
+            </span>
+            <strong className="text-base">Open another folder</strong>
+            <span className="text-[13px] text-muted-foreground">
+              Choose a new library
+            </span>
+          </button>
         </div>
-      )}
+
+        {last && (
+          <>
+            <SectionHeading
+              className="mt-14"
+              title="Continue watching"
+              hint="Resume your most recent video."
+            />
+            <ContinueCard
+              last={last}
+              onResume={() => onResume(last.rootPath, last.path)}
+            />
+          </>
+        )}
+      </div>
 
       {dropping && (
         <div className="pointer-events-none fixed inset-2 z-40 rounded-xl border-2 border-dashed border-primary" />
@@ -196,7 +222,7 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
                   variant="destructive"
                   onClick={() => requestRemove(dialog.folder)}
                 >
-                  Remove from Recents
+                  Remove from recents
                 </Button>
               </DialogFooter>
             </>
@@ -204,7 +230,7 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
           {dialog?.kind === "confirm" && (
             <>
               <DialogHeader>
-                <DialogTitle>Remove from Recents?</DialogTitle>
+                <DialogTitle>Remove from recents?</DialogTitle>
                 <DialogDescription>
                   {removalMessage(dialog.candidate)}
                 </DialogDescription>
@@ -228,10 +254,39 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
   );
 }
 
+function SectionHeading({
+  title,
+  hint,
+  action,
+  className,
+}: {
+  title: string;
+  hint: string;
+  action?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "mb-5 flex items-end justify-between border-t pt-7",
+        className
+      )}
+    >
+      <div>
+        <h2 className="text-xl font-semibold">{title}</h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">{hint}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+
 function removalMessage(c: RemoveCandidate) {
   const parts: string[] = [];
   if (c.watchedCount > 0)
-    parts.push(`${c.watchedCount} watched ${c.watchedCount === 1 ? "mark" : "marks"}`);
+    parts.push(
+      `${c.watchedCount} watched ${c.watchedCount === 1 ? "mark" : "marks"}`
+    );
   if (c.notesCount > 0)
     parts.push(`${c.notesCount} ${c.notesCount === 1 ? "note" : "notes"}`);
   return `Removing “${c.folder.name}” will also delete ${parts.join(
@@ -260,6 +315,8 @@ function RecentCard({
     };
   }, [folder.path]);
 
+  const watched = Watched.watchedCount(folder.path);
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -267,35 +324,33 @@ function RecentCard({
           onClick={onOpen}
           title={folder.path}
           className={cn(
-            "flex flex-col gap-3 rounded-xl border bg-card p-3 text-left transition-colors hover:border-primary/40",
+            "group relative rounded-xl border bg-card p-[18px] text-left transition-all hover:-translate-y-0.5 hover:border-primary/50",
             !available && "opacity-55"
           )}
         >
           <div
             className={cn(
-              "relative flex h-24 items-center justify-center rounded-lg",
-              available ? "bg-primary/10" : "bg-accent"
+              "relative grid h-[150px] place-items-center rounded-lg",
+              available ? "bg-primary-soft text-primary" : "bg-accent text-muted-foreground"
             )}
           >
-            <Folder
-              className={cn(
-                "size-11",
-                available ? "text-primary" : "text-muted-foreground"
-              )}
-            />
+            <FolderOpen className="size-14" strokeWidth={1.4} />
+            {watched > 0 && (
+              <span className="absolute right-3 top-3 rounded-md bg-background/80 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                {watched} watched
+              </span>
+            )}
             {!available && (
-              <AlertTriangle className="absolute right-2 top-2 size-4 text-amber-500" />
+              <AlertTriangle className="absolute left-3 top-3 size-4 text-amber-500" />
             )}
           </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{folder.name}</div>
-            <div className="truncate text-[11px] text-muted-foreground">
-              {folder.path}
-            </div>
-            <div className="text-[10px] text-muted-foreground/70">
+          <div className="mt-4 flex flex-col gap-1.5">
+            <MiddleTruncate text={folder.name} className="text-base font-semibold" />
+            <span className="truncate text-[13px] text-muted-foreground">
               {relativeDate(folder.lastOpenedAt)}
-            </div>
+            </span>
           </div>
+          <ChevronRight className="absolute bottom-5 right-5 size-[18px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -303,13 +358,55 @@ function RecentCard({
           Open
         </ContextMenuItem>
         <ContextMenuItem disabled={!available} onClick={onReveal}>
-          Reveal in Finder
+          Reveal in file manager
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" onClick={onRemove}>
-          Remove from Recents
+          Remove from recents
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+function ContinueCard({
+  last,
+  onResume,
+}: {
+  last: NonNullable<typeof Playback.last>;
+  onResume: () => void;
+}) {
+  const at = Watched.getProgress(last.path) ?? 0;
+  const total = Playback.duration(last.path);
+  const pct = total ? Math.min(100, (at / total) * 100) : 0;
+  const done = Watched.contains(last.path);
+
+  return (
+    <button
+      onClick={onResume}
+      className="flex w-full items-center gap-4 rounded-xl border bg-card p-3 text-left transition-colors hover:border-primary/50"
+    >
+      <span className="grid h-[82px] w-[150px] shrink-0 place-items-center rounded-md bg-primary-soft text-primary">
+        <Play className="size-6" fill="currentColor" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground">{last.folderName}</span>
+        <MiddleTruncate text={last.name} className="text-base font-semibold" />
+        <span className="text-xs text-muted-foreground">
+          {done
+            ? "Watched"
+            : total
+              ? `${formatTime(at)} of ${formatTime(total)}`
+              : "Not finished"}
+        </span>
+        <span className="mt-1 h-1 overflow-hidden rounded-full bg-accent">
+          <span
+            className="block h-full rounded-full bg-primary"
+            style={{ width: `${done ? 100 : pct}%` }}
+          />
+        </span>
+      </span>
+      <Play className="mx-3 size-5 shrink-0 text-primary" />
+    </button>
   );
 }

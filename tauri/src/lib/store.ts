@@ -4,6 +4,8 @@ const KEYS = {
   notes: "notes.v1",
   recents: "recentFolders.v1",
   speed: "playbackSpeed.v1",
+  durations: "videoDuration.v1",
+  lastPlayed: "lastPlayed.v1",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -165,7 +167,44 @@ class RecentFoldersStore {
   }
 }
 
+export type LastPlayed = {
+  path: string;
+  name: string;
+  folderName: string;
+  rootPath: string;
+  at: number;
+};
+
+// Durations are only known once a video has been opened; they turn the stored
+// resume position into a percentage for the "continue watching" card.
+class PlaybackStore {
+  durations = read<Record<string, number>>(KEYS.durations, {});
+  last = read<LastPlayed | null>(KEYS.lastPlayed, null);
+
+  duration(path: string): number | undefined {
+    return this.durations[path];
+  }
+  setDuration(path: string, seconds: number) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    if (this.durations[path] === seconds) return;
+    this.durations[path] = seconds;
+    write(KEYS.durations, this.durations);
+  }
+  setLastPlayed(entry: LastPlayed) {
+    this.last = entry;
+    write(KEYS.lastPlayed, entry);
+  }
+  clearLastPlayedUnder(folderPath: string) {
+    if (!this.last) return;
+    const prefix = underPrefix(folderPath);
+    if (!this.last.path.startsWith(prefix)) return;
+    this.last = null;
+    write(KEYS.lastPlayed, null);
+  }
+}
+
 export const Watched = new WatchedStore();
+export const Playback = new PlaybackStore();
 export const Notes = new NotesStore();
 export const Recents = new RecentFoldersStore();
 

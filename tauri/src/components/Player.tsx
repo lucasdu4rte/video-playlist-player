@@ -41,6 +41,7 @@ type Props = {
   onProgress: (seconds: number) => void;
   onPlayingChange: (playing: boolean) => void;
   onSpeedChange: (speed: number) => void;
+  onDuration: (seconds: number) => void;
   ref?: Ref<PlayerHandle>;
 };
 
@@ -62,6 +63,7 @@ export function Player({
   onProgress,
   onPlayingChange,
   onSpeedChange,
+  onDuration,
   ref,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -121,6 +123,8 @@ export function Player({
 
     player.on("loadedmetadata", () => {
       player.playbackRate(speedRef.current);
+      const total = player.duration();
+      if (typeof total === "number") onDuration(total);
       if (autoPlay) {
         if (resumeSeconds > 0) player.currentTime(resumeSeconds);
         const p = player.play();
