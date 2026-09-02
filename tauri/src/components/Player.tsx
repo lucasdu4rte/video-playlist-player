@@ -1,4 +1,11 @@
-import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
+import { Play, Pause, ChevronsRight, ChevronsLeft } from "lucide-react";
 import videojs from "video.js";
 import "video.js/dist/video-js.css";
 import "@/player-theme.css";
@@ -37,6 +44,8 @@ type Props = {
   ref?: Ref<PlayerHandle>;
 };
 
+type FlashKind = "play" | "pause" | "forward" | "back";
+
 export type PlayerHandle = {
   /** Nudge playback by `delta` seconds, clamped to the media duration. */
   seekBy: (delta: number) => void;
@@ -57,6 +66,14 @@ export function Player({
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<VjsPlayer | null>(null);
+  // Transient centre badge, like YouTube's. `id` restarts the animation when
+  // the same action repeats (e.g. holding the seek key).
+  const [flash, setFlash] = useState<{ kind: FlashKind; id: number } | null>(null);
+  const flashIdRef = useRef(0);
+  const startedRef = useRef(false);
+
+  const showFlash = (kind: FlashKind) =>
+    setFlash({ kind, id: ++flashIdRef.current });
   // The mount effect runs once, so read the speed through a ref — capturing it
   // would let a late `loadedmetadata` revert a change made while loading.
   const speedRef = useRef(speed);
@@ -116,8 +133,16 @@ export function Player({
       if (typeof t === "number") onProgress(t);
     });
     player.on("ended", onEnded);
-    player.on("play", () => onPlayingChange(true));
-    player.on("pause", () => onPlayingChange(false));
+    player.on("play", () => {
+      onPlayingChange(true);
+      // Skip the autoplay that starts each video — only echo user toggles.
+      if (startedRef.current) showFlash("play");
+      else startedRef.current = true;
+    });
+    player.on("pause", () => {
+      onPlayingChange(false);
+      if (!player.ended()) showFlash("pause");
+    });
     // The player's own speed menu is a second entry point; report it back so
     // the toolbar label and the persisted setting stay in agreement.
     player.on("ratechange", () => {
@@ -147,12 +172,32 @@ export function Player({
       if (typeof now !== "number" || !Number.isFinite(now)) return;
       const max = typeof total === "number" && Number.isFinite(total) ? total : now + delta;
       p.currentTime(Math.max(0, Math.min(now + delta, max)));
+      showFlash(delta >= 0 ? "forward" : "back");
     },
   }), []);
 
+  const FlashIcon = flash && FLASH_ICONS[flash.kind];
+
   return (
-    <div data-vjs-player className="h-full w-full">
+    <div data-vjs-player className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
+      {FlashIcon && (
+        <div
+          key={flash.id}
+          className="player-flash"
+          aria-hidden="true"
+          onAnimationEnd={() => setFlash(null)}
+        >
+          <FlashIcon className="size-9" strokeWidth={2.5} />
+        </div>
+      )}
     </div>
   );
 }
+
+const FLASH_ICONS = {
+  play: Play,
+  pause: Pause,
+  forward: ChevronsRight,
+  back: ChevronsLeft,
+} as const;

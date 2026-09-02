@@ -134,6 +134,8 @@ export function Toolbar(props: Props) {
         />
       </Tip>
 
+      <div className="flex-1" />
+
       <Tip label="Automatically play the next unwatched video">
         <BarToggle
           icon={<FastForward className={icon} />}
@@ -174,8 +176,6 @@ export function Toolbar(props: Props) {
           onClick={props.onToggleNotes}
         />
       </Tip>
-
-      <div className="flex-1" />
 
       <Tip label={`Previous Video (${isMac ? "⌘←" : "Ctrl+←"})`}>
         <BarButton
