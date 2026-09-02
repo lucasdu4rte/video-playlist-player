@@ -4,15 +4,22 @@ A desktop app (macOS / Windows / Linux) for watching folders of videos as a play
 
 ## Features
 
-- Open any local folder and recursively list every video in a navigable sidebar tree
-- Auto-marks videos as watched when playback finishes
-- Manual mark/unmark via context menu (with "Reveal in Finder/Explorer")
-- Autoplay the next unwatched video in natural folder order
-- Per-video notes panel
-- Resume where you stopped, and a "Hide Watched" filter that hides individual videos and entire fully-watched folders
-- Recent folders on the home screen; watched state, progress and notes persist across sessions
+- Open any local folder and recursively list every video in a navigable sidebar tree, with a video count per folder
+- Search the library, and collapse the sidebar when you want the video to fill the window
+- Auto-marks videos as watched when playback finishes, with a green check in the tree
+- Resumes where you stopped, and offers to restart or skip a video you've already seen
+- "Continue watching" on the home screen picks up the last video you played
+- Autoplay the next unwatched video in natural folder order, with an "up next" strip
+- "Watched" filter that hides individual videos and entire fully-watched folders
+- Per-video notes in a side panel, with a marker in the tree for videos that have one
+- Recent folders on the home screen, with a removal flow that warns before discarding watched marks and notes
+- Playback speed (0.5×–2×), picture-in-picture and fullscreen
+- Drag a folder anywhere onto the window to open it
+- Watched state, progress, durations and notes persist across sessions
 
-Supported formats: `mp4`, `mov`, `m4v`, `avi`, `mkv`, `wmv`, `ts`, `mpg`, `mpeg`.
+Supported formats: `mp4`, `mov`, `m4v`.
+
+> Folders may also contain `avi`, `mkv`, `wmv`, `ts`, `mpg` and `mpeg` files. They are listed, but no web-based player can decode them — the system webview has no demuxer for those containers. Selecting one shows a load error instead of playing.
 
 ## Running
 
@@ -34,14 +41,17 @@ Every push to `main` publishes a [release](https://github.com/lucasdu4rte/video-
 
 ## Shortcuts
 
-| Action              | Shortcut         |
-| ------------------- | ---------------- |
-| Open folder         | `⌘O` / `Ctrl+O`  |
-| Next video          | `⌘→` / `Ctrl+→`  |
-| Previous video      | `⌘←` / `Ctrl+←`  |
-| Seek back / forward | `←` / `→`        |
-| Toggle notes        | `⌘N` / `Ctrl+N`  |
-| Back to home        | `⌘⇧H` / `Ctrl+⇧H`|
+| Action              | Shortcut          |
+| ------------------- | ----------------- |
+| Open folder         | `⌘O` / `Ctrl+O`   |
+| Back to home        | `⌘⇧H` / `Ctrl+⇧H` |
+| Search the library  | `⌘K` / `Ctrl+K`   |
+| Toggle notes        | `⌘N` / `Ctrl+N`   |
+| Previous video      | `⌘←` / `Ctrl+←`   |
+| Next video          | `⌘→` / `Ctrl+→`   |
+| Seek ∓5s            | `←` / `→`         |
+
+The same list is available in the app from the **?** button in the title bar.
 
 ## Privacy
 

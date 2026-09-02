@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   scanFolder,
   pathExists,
@@ -7,31 +7,45 @@ import {
   setWindowTitle,
   type FileNode,
 } from "@/lib/platform";
-import { Watched, Recents, getSpeed, setSpeed } from "@/lib/store";
+import {
+  Watched,
+  Notes,
+  Recents,
+  Playback,
+  getSpeed,
+  setSpeed,
+  getShowDetails,
+  setShowDetails,
+} from "@/lib/store";
 import {
   ancestorsOf,
+  countVideos,
   filteredRoots,
   nextUnwatched,
+  searchTree,
   videoAfter,
   videoBefore,
 } from "@/lib/tree";
+import { AppHeader } from "@/components/AppHeader";
 import { Home } from "@/components/Home";
-import { Toolbar } from "@/components/Toolbar";
 import { Sidebar } from "@/components/Sidebar";
+import { PlayerArea } from "@/components/PlayerArea";
 import { NotesPanel } from "@/components/NotesPanel";
 import { WatchedBanner } from "@/components/WatchedBanner";
 import { Player, type PlayerHandle } from "@/components/Player";
+import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { PlaySquare } from "lucide-react";
+import type { ImperativePanelHandle } from "react-resizable-panels";
 
 const SEEK_STEP = 5; // seconds per arrow press
 
 export default function App() {
   const [roots, setRoots] = useState<FileNode[]>([]);
+  const [rootPath, setRootPath] = useState<string | null>(null);
   const [hasOpenedFolder, setHasOpenedFolder] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [hideWatched, setHideWatched] = useState(false);
@@ -46,8 +60,13 @@ export default function App() {
   const [pendingWatched, setPendingWatched] = useState<FileNode | null>(null);
   const [showingNotes, setShowingNotes] = useState(false);
   const [speed, setSpeedState] = useState<number>(getSpeed());
+  const [query, setQuery] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dropping, setDropping] = useState(false);
-  const [recentsVersion, setRecentsVersion] = useState(0);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showDetails, setShowDetailsState] = useState(getShowDetails());
+  const [noted, setNoted] = useState<Set<string>>(new Set(Notes.paths()));
+  const [, bumpRecents] = useState(0);
 
   const currentTimeRef = useRef(0);
   const lastSavedRef = useRef(0);
@@ -56,33 +75,57 @@ export default function App() {
   const wakePendingRef = useRef(false);
   const scanTokenRef = useRef(0);
   const playerRef = useRef<PlayerHandle | null>(null);
+  const sidebarPanelRef = useRef<ImperativePanelHandle | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const resumeTargetRef = useRef<string | null>(null);
 
-  // ---- playback -----------------------------------------------------------
-  // Reads the store, not the `watched` state mirror: within one event the
-  // mirror is a render behind, which would re-save a resume point for a video
-  // that was just marked watched.
+  // ---- playback
   const persistProgress = useCallback(() => {
     if (!currentVideo || Watched.contains(currentVideo.path)) return;
     const t = currentTimeRef.current;
     if (Number.isFinite(t) && t > 3) Watched.setProgress(currentVideo.path, t);
   }, [currentVideo]);
 
+  const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? "";
+
+  // Root-to-leaf folder names, so the breadcrumb shows the whole path rather
+  // than just the folder the video sits in.
+  const folderTrailFor = useCallback(
+    (node: FileNode | null): string[] => {
+      if (!node) return [];
+      const ancestors = ancestorsOf(roots, node);
+      if (ancestors.length === 0) return rootPath ? [basename(rootPath)] : [];
+      return [...ancestors].reverse().map(basename);
+    },
+    [roots, rootPath]
+  );
+
+  const parentFolderName = useCallback(
+    (node: FileNode | null) => folderTrailFor(node).at(-1) ?? "",
+    [folderTrailFor]
+  );
+
   const playVideo = useCallback(
     (node: FileNode, autoPlay = true) => {
       if (node.type !== "video") return;
-      const ancestors = ancestorsOf(roots, node);
-      setExpanded((prev) => new Set([...prev, ...ancestors]));
+      setExpanded((prev) => new Set([...prev, ...ancestorsOf(roots, node)]));
       persistProgress();
       currentTimeRef.current = 0;
       lastSavedRef.current = 0;
       setAutoPlayIntent(autoPlay);
-      // Re-selecting the current video remounts the player instead of falling
-      // through, so the banner never sits over a still-playing video.
       if (node.path === currentVideo?.path) setPlayNonce((n) => n + 1);
       else setCurrentVideo(node);
       void setWindowTitle(node.name);
+      if (rootPath)
+        Playback.setLastPlayed({
+          path: node.path,
+          name: node.name,
+          folderName: parentFolderName(node),
+          rootPath,
+          at: Date.now(),
+        });
     },
-    [roots, currentVideo, persistProgress]
+    [roots, currentVideo, persistProgress, rootPath, parentFolderName]
   );
 
   const markWatched = useCallback((node: FileNode) => {
@@ -136,13 +179,10 @@ export default function App() {
     markUnwatched(node);
     Watched.clearProgress(node.path);
     setPendingWatched(null);
-    if (currentVideo?.path === node.path) {
-      currentTimeRef.current = 0;
-      setAutoPlayIntent(true);
-      setPlayNonce((n) => n + 1); // remount the player from the start
-    } else {
-      playVideo(node);
-    }
+    currentTimeRef.current = 0;
+    setAutoPlayIntent(true);
+    if (currentVideo?.path === node.path) setPlayNonce((n) => n + 1);
+    else playVideo(node);
   };
 
   const skipPendingToNext = (node: FileNode) => {
@@ -174,8 +214,6 @@ export default function App() {
     wakePendingRef.current = true;
     try {
       const sentinel = await navigator.wakeLock.request("screen");
-      // The platform auto-releases while the document is hidden; clearing the
-      // ref on that event is what lets a later play re-acquire it.
       sentinel.addEventListener("release", () => {
         if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
       });
@@ -207,34 +245,44 @@ export default function App() {
     setSpeedState(value);
   };
 
-  // Stable callbacks for the player (it captures them once on mount).
-  const cbRef = useRef({ handleEnded, onProgress, onPlayingChange, changeSpeed });
-  cbRef.current = { handleEnded, onProgress, onPlayingChange, changeSpeed };
-  const stableEnded = useCallback(() => cbRef.current.handleEnded(), []);
-  const stableProgress = useCallback(
-    (n: number) => cbRef.current.onProgress(n),
-    []
-  );
-  const stablePlaying = useCallback(
-    (b: boolean) => cbRef.current.onPlayingChange(b),
-    []
-  );
-  const stableSpeed = useCallback((s: number) => cbRef.current.changeSpeed(s), []);
+  const onDuration = (seconds: number) => {
+    if (currentVideo) Playback.setDuration(currentVideo.path, seconds);
+  };
 
-  // ---- folder loading / routing ------------------------------------------
+  const cbRef = useRef({
+    handleEnded,
+    onProgress,
+    onPlayingChange,
+    changeSpeed,
+    onDuration,
+  });
+  cbRef.current = {
+    handleEnded,
+    onProgress,
+    onPlayingChange,
+    changeSpeed,
+    onDuration,
+  };
+  const stableEnded = useCallback(() => cbRef.current.handleEnded(), []);
+  const stableProgress = useCallback((n: number) => cbRef.current.onProgress(n), []);
+  const stablePlaying = useCallback((b: boolean) => cbRef.current.onPlayingChange(b), []);
+  const stableSpeed = useCallback((s: number) => cbRef.current.changeSpeed(s), []);
+  const stableDuration = useCallback((s: number) => cbRef.current.onDuration(s), []);
+
+  // ---- folder loading / routing
   const openFolder = useCallback(
     async (path: string) => {
       persistProgress();
       void releaseWake();
       const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-      // Token so a slow scan that resolves after a newer one is discarded
-      // instead of overwriting the folder the user actually opened.
       const token = ++scanTokenRef.current;
       setIsLoading(true);
       setHasOpenedFolder(true);
+      setRootPath(path);
       setCurrentVideo(null);
       setPendingWatched(null);
       setExpanded(new Set());
+      setQuery("");
       let tree: FileNode[] = [];
       try {
         tree = await scanFolder(path);
@@ -245,15 +293,38 @@ export default function App() {
       setRoots(tree);
       setIsLoading(false);
       Recents.record(path, name);
-      setRecentsVersion((v) => v + 1);
+      bumpRecents((v) => v + 1);
+
+      // Resuming from the home screen: select the video once the tree is in.
+      const target = resumeTargetRef.current;
+      resumeTargetRef.current = null;
+      if (target) {
+        const stack = [...tree];
+        while (stack.length) {
+          const n = stack.pop()!;
+          if (n.type === "video" && n.path === target) {
+            handleVideoTap(n);
+            break;
+          }
+          if (n.children) stack.push(...n.children);
+        }
+      }
     },
-    [persistProgress]
+    [persistProgress, handleVideoTap]
   );
 
   const selectFolder = useCallback(async () => {
     const path = await pickFolder();
     if (path) void openFolder(path);
   }, [openFolder]);
+
+  const resumeLast = useCallback(
+    (root: string, videoPath: string) => {
+      resumeTargetRef.current = videoPath;
+      void openFolder(root);
+    },
+    [openFolder]
+  );
 
   const handleDrop = useCallback(
     (paths: string[]) => {
@@ -276,20 +347,28 @@ export default function App() {
     setCurrentVideo(null);
     setPendingWatched(null);
     setRoots([]);
+    setRootPath(null);
     setHasOpenedFolder(false);
     setIsLoading(false);
+    bumpRecents((v) => v + 1);
   }, [persistProgress]);
 
   const toggleNotes = useCallback(() => setShowingNotes((s) => !s), []);
 
-  // ---- global shortcuts (read latest actions via a ref) ------------------
+  const focusSearch = useCallback(() => {
+    sidebarPanelRef.current?.expand();
+    setSidebarCollapsed(false);
+    requestAnimationFrame(() => searchRef.current?.focus());
+  }, []);
+
+  // ---- global shortcuts
   const apiRef = useRef({
     goHome,
     selectFolder,
     toggleNotes,
     playNext,
     playPrevious,
-    handleDrop,
+    focusSearch,
     seekBy: (d: number) => playerRef.current?.seekBy(d),
     hasOpenedFolder,
   });
@@ -299,7 +378,7 @@ export default function App() {
     toggleNotes,
     playNext,
     playPrevious,
-    handleDrop,
+    focusSearch,
     seekBy: (d: number) => playerRef.current?.seekBy(d),
     hasOpenedFolder,
   };
@@ -307,201 +386,216 @@ export default function App() {
   useEffect(() => {
     const isMac = navigator.platform.toLowerCase().includes("mac");
     const onKey = (e: KeyboardEvent) => {
-      // Never steal editing keys (⌘←/⌘→ move the caret) from the notes field.
       const target = e.target as HTMLElement | null;
-      if (
+      const editing =
         target?.isContentEditable ||
-        /^(input|textarea|select)$/i.test(target?.tagName ?? "")
-      )
-        return;
-      const api = apiRef.current;
+        /^(input|textarea|select)$/i.test(target?.tagName ?? "");
       const mod = isMac ? e.metaKey : e.ctrlKey;
-      // Bare arrows scrub the current video; with the modifier they change video.
+      const api = apiRef.current;
+
+      if (editing && e.key === "Escape") {
+        (target as HTMLElement).blur();
+        return;
+      }
+      if (editing) {
+        if (mod && e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          api.focusSearch();
+        }
+        return;
+      }
       if (!mod && !e.altKey && !e.shiftKey && api.hasOpenedFolder) {
-        if (e.key === "ArrowRight") {
-          e.preventDefault();
-          return api.seekBy(SEEK_STEP);
-        }
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          return api.seekBy(-SEEK_STEP);
-        }
+        if (e.key === "ArrowRight") return e.preventDefault(), api.seekBy(SEEK_STEP);
+        if (e.key === "ArrowLeft") return e.preventDefault(), api.seekBy(-SEEK_STEP);
       }
       if (!mod) return;
       const key = e.key.toLowerCase();
-      if (api.hasOpenedFolder) {
-        if (e.shiftKey && key === "h") return e.preventDefault(), api.goHome();
-        if (key === "o") return e.preventDefault(), void api.selectFolder();
-        if (key === "n") return e.preventDefault(), api.toggleNotes();
-        if (e.key === "ArrowLeft") return e.preventDefault(), api.playPrevious();
-        if (e.key === "ArrowRight") return e.preventDefault(), api.playNext();
-      } else if (key === "o") {
-        e.preventDefault();
-        void api.selectFolder();
-      }
+      if (key === "o") return e.preventDefault(), void api.selectFolder();
+      if (!api.hasOpenedFolder) return;
+      if (e.shiftKey && key === "h") return e.preventDefault(), api.goHome();
+      if (key === "k") return e.preventDefault(), api.focusSearch();
+      if (key === "n") return e.preventDefault(), api.toggleNotes();
+      if (e.key === "ArrowLeft") return e.preventDefault(), api.playPrevious();
+      if (e.key === "ArrowRight") return e.preventDefault(), api.playNext();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Registered once — re-subscribing per video would leave a window where the
-  // async unlisten and the new listen overlap, double-handling or losing a drop.
   useEffect(() => {
     const unlisten = onFolderDrop({
       onOver: () => setDropping(true),
       onLeave: () => setDropping(false),
-      onDrop: (paths) => apiRef.current.handleDrop(paths),
+      onDrop: (paths) => handleDropRef.current(paths),
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
   }, []);
+  const handleDropRef = useRef(handleDrop);
+  handleDropRef.current = handleDrop;
 
   useEffect(() => {
     const onVisibility = () => {
       if (!document.hidden && wakeWantedRef.current) void acquireWake();
     };
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("beforeunload", persistProgress);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", persistProgress);
       void releaseWake();
     };
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("beforeunload", persistProgress);
-    return () => window.removeEventListener("beforeunload", persistProgress);
   }, [persistProgress]);
 
-  // ---- render -------------------------------------------------------------
-  if (!hasOpenedFolder) {
-    return (
-      <Home
-        dropping={dropping}
-        onOpenFolder={selectFolder}
-        onOpenPath={openFolder}
-        onChanged={() => {
-          // Removing a folder wipes its marks in the store; mirror that here or
-          // the sidebar keeps rendering checks the store no longer holds.
-          setWatchedState(new Set(Watched.watched));
-          setRecentsVersion((v) => v + 1);
-        }}
-      />
-    );
-  }
-
-  const visibleRoots = filteredRoots(roots, hideWatched, watched);
-  const hasNext = pendingWatched
-    ? Boolean(videoAfter(roots, pendingWatched))
-    : false;
+  // ---- derived
+  const searched = useMemo(() => searchTree(roots, query), [roots, query]);
+  const visibleRoots = useMemo(
+    () => filteredRoots(searched, hideWatched, watched),
+    [searched, hideWatched, watched]
+  );
+  const totalVideos = useMemo(
+    () => roots.reduce((n, r) => n + countVideos(r), 0),
+    [roots]
+  );
+  const nextVideo = currentVideo ? videoAfter(roots, currentVideo) : null;
+  const hasNext = pendingWatched ? Boolean(videoAfter(roots, pendingWatched)) : false;
   const resumeSeconds =
-    currentVideo && autoPlayIntent
-      ? Watched.getProgress(currentVideo.path) ?? 0
-      : 0;
+    currentVideo && autoPlayIntent ? Watched.getProgress(currentVideo.path) ?? 0 : 0;
+  const rootName = rootPath?.split(/[\\/]/).filter(Boolean).pop() ?? "Library";
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar
-        currentVideo={currentVideo}
-        hideWatched={hideWatched}
-        autoplayNext={autoplayNext}
-        showingNotes={showingNotes}
-        speed={speed}
-        onHome={goHome}
-        onOpen={selectFolder}
-        onToggleHideWatched={() => setHideWatched((v) => !v)}
-        onToggleAutoplay={() => setAutoplayNext((v) => !v)}
-        onChangeSpeed={changeSpeed}
-        onToggleNotes={toggleNotes}
-        onPrevious={playPrevious}
-        onNext={playNext}
-      />
+      <AppHeader canGoBack={hasOpenedFolder} onHome={goHome} onShowShortcuts={() => setShowShortcuts(true)} />
 
-      <div className="flex min-h-0 flex-1">
-        <ResizablePanelGroup
-          direction="horizontal"
-          autoSaveId="vpp-split"
-          className="min-h-0 flex-1"
-        >
-          <ResizablePanel id="sidebar" order={1} defaultSize={22} minSize={14} maxSize={40}>
-            <Sidebar
-              roots={visibleRoots}
-              isLoading={isLoading}
-              hideWatched={hideWatched}
-              watched={watched}
-              expanded={expanded}
-              currentPath={currentVideo?.path ?? null}
-              onToggleExpand={(path) =>
-                setExpanded((prev) => {
-                  const next = new Set(prev);
-                  next.has(path) ? next.delete(path) : next.add(path);
-                  return next;
-                })
-              }
-              onPlay={handleVideoTap}
-              onMarkWatched={markWatched}
-              onMarkUnwatched={markUnwatched}
-            />
-          </ResizablePanel>
-
-          <ResizableHandle />
-
-          <ResizablePanel id="main" order={2} minSize={30}>
-            <main className="relative flex h-full items-center justify-center overflow-hidden bg-black">
-              {currentVideo ? (
-                <Player
-                  ref={playerRef}
-                  key={`${currentVideo.path}#${playNonce}`}
-                  path={currentVideo.path}
-                  autoPlay={autoPlayIntent}
-                  resumeSeconds={resumeSeconds}
-                  speed={speed}
-                  onEnded={stableEnded}
-                  onProgress={stableProgress}
-                  onPlayingChange={stablePlaying}
-                  onSpeedChange={stableSpeed}
-                />
-              ) : (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background px-6 text-center text-muted-foreground">
-                  <PlaySquare className="size-11 opacity-40" />
-                  <div className="text-base font-semibold text-foreground">
-                    No video selected
-                  </div>
-                  <div className="max-w-80 text-xs">
-                    Choose a video from the sidebar to start playing.
-                  </div>
-                </div>
-              )}
-
-              {pendingWatched && (
-                <WatchedBanner
-                  video={pendingWatched}
-                  hasNext={hasNext}
-                  onSkip={() => skipPendingToNext(pendingWatched)}
-                  onRestart={() => restartFromBeginning(pendingWatched)}
-                />
-              )}
-            </main>
-          </ResizablePanel>
-
-          {showingNotes && <ResizableHandle key="notes-handle" />}
-          {showingNotes && (
+      {!hasOpenedFolder ? (
+        <Home
+          dropping={dropping}
+          onOpenFolder={selectFolder}
+          onOpenPath={openFolder}
+          onResume={resumeLast}
+          onChanged={() => {
+            setWatchedState(new Set(Watched.watched));
+            bumpRecents((v) => v + 1);
+          }}
+        />
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <ResizablePanelGroup
+            direction="horizontal"
+            autoSaveId="vpp-split"
+            className="min-h-0 flex-1"
+          >
             <ResizablePanel
-              id="notes"
-              order={3}
-              defaultSize={24}
-              minSize={16}
+              id="sidebar"
+              order={1}
+              ref={sidebarPanelRef}
+              defaultSize={22}
+              minSize={14}
               maxSize={40}
+              collapsible
+              collapsedSize={0}
+              onCollapse={() => setSidebarCollapsed(true)}
+              onExpand={() => setSidebarCollapsed(false)}
             >
-              <NotesPanel video={currentVideo} />
+              <Sidebar
+                rootName={rootName}
+                roots={visibleRoots}
+                totalVideos={totalVideos}
+                isLoading={isLoading}
+                hideWatched={hideWatched}
+                watched={watched}
+                noted={noted}
+                expanded={expanded}
+                currentPath={currentVideo?.path ?? null}
+                query={query}
+                searchRef={searchRef}
+                onQueryChange={setQuery}
+                onToggleHideWatched={() => setHideWatched((v) => !v)}
+                onCollapse={() => sidebarPanelRef.current?.collapse()}
+                onToggleExpand={(path) =>
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    next.has(path) ? next.delete(path) : next.add(path);
+                    return next;
+                  })
+                }
+                onPlay={handleVideoTap}
+                onMarkWatched={markWatched}
+                onMarkUnwatched={markUnwatched}
+              />
             </ResizablePanel>
-          )}
-        </ResizablePanelGroup>
-      </div>
 
-      {dropping && (
+            <ResizableHandle />
+
+            <ResizablePanel id="main" order={2} minSize={30}>
+              <PlayerArea
+                video={currentVideo}
+                folderTrail={folderTrailFor(currentVideo)}
+                watched={currentVideo ? watched.has(currentVideo.path) : false}
+                nextVideo={nextVideo}
+                autoplayNext={autoplayNext}
+                showingNotes={showingNotes}
+                hasNotes={currentVideo ? noted.has(currentVideo.path) : false}
+                showDetails={showDetails}
+                sidebarCollapsed={sidebarCollapsed}
+                onHome={goHome}
+                onExpandSidebar={() => sidebarPanelRef.current?.expand()}
+                onNext={playNext}
+                onToggleAutoplay={() => setAutoplayNext((v) => !v)}
+                onToggleNotes={toggleNotes}
+                onToggleDetails={() => {
+                  const next = !showDetails;
+                  setShowDetails(next);
+                  setShowDetailsState(next);
+                }}
+              >
+                {currentVideo && (
+                  <>
+                    <Player
+                      ref={playerRef}
+                      key={`${currentVideo.path}#${playNonce}`}
+                      path={currentVideo.path}
+                      autoPlay={autoPlayIntent}
+                      resumeSeconds={resumeSeconds}
+                      speed={speed}
+                      onEnded={stableEnded}
+                      onProgress={stableProgress}
+                      onPlayingChange={stablePlaying}
+                      onSpeedChange={stableSpeed}
+                      onDuration={stableDuration}
+                    />
+                    {pendingWatched && (
+                      <WatchedBanner
+                        video={pendingWatched}
+                        hasNext={hasNext}
+                        onSkip={() => skipPendingToNext(pendingWatched)}
+                        onRestart={() => restartFromBeginning(pendingWatched)}
+                      />
+                    )}
+                  </>
+                )}
+              </PlayerArea>
+            </ResizablePanel>
+
+            {showingNotes && <ResizableHandle key="notes-handle" />}
+            {showingNotes && (
+              <ResizablePanel id="notes" order={3} defaultSize={24} minSize={16} maxSize={40}>
+                <NotesPanel
+                  video={currentVideo}
+                  onNotesChange={() => setNoted(new Set(Notes.paths()))}
+                />
+              </ResizablePanel>
+            )}
+          </ResizablePanelGroup>
+        </div>
+      )}
+
+      {dropping && hasOpenedFolder && (
         <div className="pointer-events-none fixed inset-2 z-40 rounded-xl border-2 border-dashed border-primary" />
       )}
+
+      <ShortcutsDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
     </div>
   );
 }

@@ -50,21 +50,38 @@ export function filteredRoots(
   return roots.filter((n) => subtreeHasUnwatched(n, watched));
 }
 
-// Ancestor folder paths that must be expanded for `target` to be visible.
+export function countVideos(node: FileNode): number {
+  if (node.type === "video") return 1;
+  return (node.children ?? []).reduce((n, c) => n + countVideos(c), 0);
+}
+
+/** Keeps videos whose name matches, and folders that still have a match under them. */
+export function searchTree(roots: FileNode[], query: string): FileNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return roots;
+  const walk = (items: FileNode[]): FileNode[] =>
+    items.flatMap((it) => {
+      if (it.type === "video")
+        return it.name.toLowerCase().includes(q) ? [it] : [];
+      const children = walk(it.children ?? []);
+      if (children.length === 0 && !it.name.toLowerCase().includes(q)) return [];
+      return [{ ...it, children: children.length ? children : it.children }];
+    });
+  return walk(roots);
+}
+
+/**
+ * Ancestor folder paths of `target`, innermost first — the order the sidebar
+ * needs to expand them. Reverse it for a root-to-leaf breadcrumb.
+ */
 export function ancestorsOf(roots: FileNode[], target: FileNode): string[] {
-  const trail: string[] = [];
   const found: string[] = [];
   const walk = (items: FileNode[]): boolean => {
     for (const it of items) {
       if (it.path === target.path) return true;
-      if (it.type === "folder" && it.children) {
-        trail.push(it.path);
-        if (walk(it.children)) {
-          found.push(it.path);
-          trail.pop();
-          return true;
-        }
-        trail.pop();
+      if (it.type === "folder" && it.children && walk(it.children)) {
+        found.push(it.path);
+        return true;
       }
     }
     return false;

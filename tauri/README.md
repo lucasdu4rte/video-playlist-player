@@ -11,8 +11,8 @@ Cross-platform (macOS / Windows / Linux) desktop app, built to feel native.
   "folder unavailable" state on the Home screen.
 - **Frontend:** React + TypeScript + Vite, styled with Tailwind CSS v4 and
   shadcn/ui components (Button, Toggle, DropdownMenu, Tooltip, ScrollArea,
-  ContextMenu, Dialog). Playback is Video.js (scrubber, speed menu,
-  fullscreen, PiP) fed by `convertFileSrc`, skinned in `player-theme.css`.
+  ContextMenu, Dialog). Playback is Vidstack's default video layout
+  (scrubber, speed menu, fullscreen, PiP) fed by `convertFileSrc`.
   Watched marks, resume progress, notes and recent folders persist in
   `localStorage`.
 
