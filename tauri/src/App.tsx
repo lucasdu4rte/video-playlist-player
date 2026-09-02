@@ -20,13 +20,15 @@ import { Toolbar } from "@/components/Toolbar";
 import { Sidebar } from "@/components/Sidebar";
 import { NotesPanel } from "@/components/NotesPanel";
 import { WatchedBanner } from "@/components/WatchedBanner";
-import { Player } from "@/components/Player";
+import { Player, type PlayerHandle } from "@/components/Player";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { PlaySquare } from "lucide-react";
+
+const SEEK_STEP = 5; // seconds per arrow press
 
 export default function App() {
   const [roots, setRoots] = useState<FileNode[]>([]);
@@ -53,6 +55,7 @@ export default function App() {
   const wakeWantedRef = useRef(false);
   const wakePendingRef = useRef(false);
   const scanTokenRef = useRef(0);
+  const playerRef = useRef<PlayerHandle | null>(null);
 
   // ---- playback -----------------------------------------------------------
   // Reads the store, not the `watched` state mirror: within one event the
@@ -205,8 +208,8 @@ export default function App() {
   };
 
   // Stable callbacks for the player (it captures them once on mount).
-  const cbRef = useRef({ handleEnded, onProgress, onPlayingChange });
-  cbRef.current = { handleEnded, onProgress, onPlayingChange };
+  const cbRef = useRef({ handleEnded, onProgress, onPlayingChange, changeSpeed });
+  cbRef.current = { handleEnded, onProgress, onPlayingChange, changeSpeed };
   const stableEnded = useCallback(() => cbRef.current.handleEnded(), []);
   const stableProgress = useCallback(
     (n: number) => cbRef.current.onProgress(n),
@@ -216,6 +219,7 @@ export default function App() {
     (b: boolean) => cbRef.current.onPlayingChange(b),
     []
   );
+  const stableSpeed = useCallback((s: number) => cbRef.current.changeSpeed(s), []);
 
   // ---- folder loading / routing ------------------------------------------
   const openFolder = useCallback(
@@ -286,6 +290,7 @@ export default function App() {
     playNext,
     playPrevious,
     handleDrop,
+    seekBy: (d: number) => playerRef.current?.seekBy(d),
     hasOpenedFolder,
   });
   apiRef.current = {
@@ -295,6 +300,7 @@ export default function App() {
     playNext,
     playPrevious,
     handleDrop,
+    seekBy: (d: number) => playerRef.current?.seekBy(d),
     hasOpenedFolder,
   };
 
@@ -308,9 +314,20 @@ export default function App() {
         /^(input|textarea|select)$/i.test(target?.tagName ?? "")
       )
         return;
-      const mod = isMac ? e.metaKey : e.ctrlKey;
-      if (!mod) return;
       const api = apiRef.current;
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      // Bare arrows scrub the current video; with the modifier they change video.
+      if (!mod && !e.altKey && !e.shiftKey && api.hasOpenedFolder) {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          return api.seekBy(SEEK_STEP);
+        }
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          return api.seekBy(-SEEK_STEP);
+        }
+      }
+      if (!mod) return;
       const key = e.key.toLowerCase();
       if (api.hasOpenedFolder) {
         if (e.shiftKey && key === "h") return e.preventDefault(), api.goHome();
@@ -433,6 +450,7 @@ export default function App() {
             <main className="relative flex h-full items-center justify-center overflow-hidden bg-black">
               {currentVideo ? (
                 <Player
+                  ref={playerRef}
                   key={`${currentVideo.path}#${playNonce}`}
                   path={currentVideo.path}
                   autoPlay={autoPlayIntent}
@@ -441,6 +459,7 @@ export default function App() {
                   onEnded={stableEnded}
                   onProgress={stableProgress}
                   onPlayingChange={stablePlaying}
+                  onSpeedChange={stableSpeed}
                 />
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background px-6 text-center text-muted-foreground">

@@ -32,6 +32,9 @@ const speedLabel = (s: number) => `${s}×`;
 const isMac = navigator.platform.toLowerCase().includes("mac");
 const cmd = isMac ? "⌘" : "Ctrl+";
 
+const barItem =
+  "flex h-auto flex-col gap-0.5 px-2.5 py-1.5 text-[10px] font-normal text-muted-foreground";
+
 type Props = {
   currentVideo: FileNode | null;
   hideWatched: boolean;
@@ -73,7 +76,7 @@ function BarButton({
       variant="ghost"
       onClick={onClick}
       disabled={disabled}
-      className="flex h-auto flex-col gap-0.5 px-2.5 py-1.5 text-[10px] font-normal text-muted-foreground hover:text-foreground"
+      className={cn(barItem, "hover:text-foreground")}
     >
       {icon}
       <span className="leading-none">{label}</span>
@@ -97,7 +100,7 @@ function BarToggle({
       pressed={pressed}
       onPressedChange={onClick}
       className={cn(
-        "flex h-auto flex-col gap-0.5 px-2.5 py-1.5 text-[10px] font-normal text-muted-foreground",
+        barItem,
         "data-[state=on]:bg-transparent data-[state=on]:text-primary"
       )}
     >
@@ -112,49 +115,38 @@ export function Toolbar(props: Props) {
   const icon = "size-[18px]";
   return (
     <div className="flex h-12 flex-none items-center gap-1 border-b bg-background/80 px-3 backdrop-blur">
-      <Tip label="Back to Home (⌘⇧H)">
-        <div>
-          <BarButton icon={<House className={icon} />} label="Home" onClick={props.onHome} />
-        </div>
+      <Tip label={`Back to Home (${isMac ? "⌘⇧H" : "Ctrl+Shift+H"})`}>
+        <BarButton icon={<House className={icon} />} label="Home" onClick={props.onHome} />
       </Tip>
 
       <div className="mx-1 h-6 w-px bg-border" />
 
       <Tip label={`Open Folder (${cmd}O)`}>
-        <div>
-          <BarButton icon={<FolderOpen className={icon} />} label="Open" onClick={props.onOpen} />
-        </div>
+        <BarButton icon={<FolderOpen className={icon} />} label="Open" onClick={props.onOpen} />
       </Tip>
 
       <Tip label="Hide videos already watched">
-        <div>
-          <BarToggle
-            icon={props.hideWatched ? <EyeOff className={icon} /> : <Eye className={icon} />}
-            label="Hide Watched"
-            pressed={props.hideWatched}
-            onClick={props.onToggleHideWatched}
-          />
-        </div>
+        <BarToggle
+          icon={props.hideWatched ? <EyeOff className={icon} /> : <Eye className={icon} />}
+          label="Hide Watched"
+          pressed={props.hideWatched}
+          onClick={props.onToggleHideWatched}
+        />
       </Tip>
 
       <Tip label="Automatically play the next unwatched video">
-        <div>
-          <BarToggle
-            icon={<FastForward className={icon} />}
-            label="Autoplay"
-            pressed={props.autoplayNext}
-            onClick={props.onToggleAutoplay}
-          />
-        </div>
+        <BarToggle
+          icon={<FastForward className={icon} />}
+          label="Autoplay"
+          pressed={props.autoplayNext}
+          onClick={props.onToggleAutoplay}
+        />
       </Tip>
 
       <DropdownMenu>
         <Tip label="Playback Speed">
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              className="flex h-auto flex-col gap-0.5 px-2.5 py-1.5 text-[10px] font-normal text-muted-foreground hover:text-foreground"
-            >
+            <Button variant="ghost" className={cn(barItem, "hover:text-foreground")}>
               <Gauge className={icon} />
               <span className="leading-none">{speedLabel(props.speed)}</span>
             </Button>
@@ -175,37 +167,31 @@ export function Toolbar(props: Props) {
       </DropdownMenu>
 
       <Tip label={`Toggle Notes Panel (${cmd}N)`}>
-        <div>
-          <BarToggle
-            icon={<StickyNote className={icon} />}
-            label="Notes"
-            pressed={props.showingNotes}
-            onClick={props.onToggleNotes}
-          />
-        </div>
+        <BarToggle
+          icon={<StickyNote className={icon} />}
+          label="Notes"
+          pressed={props.showingNotes}
+          onClick={props.onToggleNotes}
+        />
       </Tip>
 
       <div className="flex-1" />
 
       <Tip label={`Previous Video (${isMac ? "⌘←" : "Ctrl+←"})`}>
-        <div>
-          <BarButton
-            icon={<SkipBack className={icon} />}
-            label="Previous"
-            onClick={props.onPrevious}
-            disabled={disabled}
-          />
-        </div>
+        <BarButton
+          icon={<SkipBack className={icon} />}
+          label="Previous"
+          onClick={props.onPrevious}
+          disabled={disabled}
+        />
       </Tip>
       <Tip label={`Next Video (${isMac ? "⌘→" : "Ctrl+→"})`}>
-        <div>
-          <BarButton
-            icon={<SkipForward className={icon} />}
-            label="Next"
-            onClick={props.onNext}
-            disabled={disabled}
-          />
-        </div>
+        <BarButton
+          icon={<SkipForward className={icon} />}
+          label="Next"
+          onClick={props.onNext}
+          disabled={disabled}
+        />
       </Tip>
     </div>
   );

@@ -1,7 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 import videojs from "video.js";
 import "video.js/dist/video-js.css";
+import "@/player-theme.css";
 import { toMediaSrc } from "@/lib/platform";
+
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 type VjsPlayer = ReturnType<typeof videojs>;
 
@@ -30,6 +33,13 @@ type Props = {
   onEnded: () => void;
   onProgress: (seconds: number) => void;
   onPlayingChange: (playing: boolean) => void;
+  onSpeedChange: (speed: number) => void;
+  ref?: Ref<PlayerHandle>;
+};
+
+export type PlayerHandle = {
+  /** Nudge playback by `delta` seconds, clamped to the media duration. */
+  seekBy: (delta: number) => void;
 };
 
 // Video.js gives a consistent player UI + error reporting across platforms.
@@ -42,6 +52,8 @@ export function Player({
   onEnded,
   onProgress,
   onPlayingChange,
+  onSpeedChange,
+  ref,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<VjsPlayer | null>(null);
@@ -63,7 +75,24 @@ export function Player({
       preload: "auto",
       fill: true,
       playsinline: true,
-      controlBar: { pictureInPictureToggle: true },
+      playbackRates: SPEEDS,
+      // YouTube ordering: transport + time on the left, settings on the right,
+      // seek bar pulled onto its own row above them by the theme.
+      controlBar: {
+        volumePanel: { inline: true },
+        children: [
+          "playToggle",
+          "volumePanel",
+          "currentTimeDisplay",
+          "timeDivider",
+          "durationDisplay",
+          "customControlSpacer",
+          "playbackRateMenuButton",
+          "pictureInPictureToggle",
+          "fullscreenToggle",
+          "progressControl",
+        ],
+      },
       sources: [{ src: toMediaSrc(path), ...(type ? { type } : {}) }],
     }));
 
@@ -87,6 +116,12 @@ export function Player({
     player.on("ended", onEnded);
     player.on("play", () => onPlayingChange(true));
     player.on("pause", () => onPlayingChange(false));
+    // The player's own speed menu is a second entry point; report it back so
+    // the toolbar label and the persisted setting stay in agreement.
+    player.on("ratechange", () => {
+      const rate = player.playbackRate();
+      if (typeof rate === "number" && rate !== speedRef.current) onSpeedChange(rate);
+    });
 
     return () => {
       const p = playerRef.current;
@@ -100,6 +135,18 @@ export function Player({
     const p = playerRef.current;
     if (p && !p.isDisposed()) p.playbackRate(speed);
   }, [speed]);
+
+  useImperativeHandle(ref, () => ({
+    seekBy(delta: number) {
+      const p = playerRef.current;
+      if (!p || p.isDisposed()) return;
+      const now = p.currentTime();
+      const total = p.duration();
+      if (typeof now !== "number" || !Number.isFinite(now)) return;
+      const max = typeof total === "number" && Number.isFinite(total) ? total : now + delta;
+      p.currentTime(Math.max(0, Math.min(now + delta, max)));
+    },
+  }), []);
 
   return (
     <div data-vjs-player className="h-full w-full">
