@@ -1,24 +1,3 @@
-# Node
 node_modules/
-
-# macOS
 .DS_Store
-
-# Xcode user data
-xcuserdata/
-*.xcuserstate
-*.xcuserdatad/
-
-# Build output
-build/
-DerivedData/
-*.xcarchive
-
-# Distribution artifacts
 *.dmg
-
-# Swift Package Manager
-.build/
-.swiftpm/
-Packages/
-Package.resolved

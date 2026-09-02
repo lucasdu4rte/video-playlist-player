@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 // Keeps the distinguishing tail (e.g. "…03.mp4") visible while truncating the
-// head — mirrors SwiftUI's .truncationMode(.middle).
+// head.
 export function MiddleTruncate({
   text,
   tail = 8,

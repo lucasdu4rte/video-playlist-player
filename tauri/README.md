@@ -1,21 +1,20 @@
-# Video Playlist Player — Tauri prototype
+# Video Playlist Player — desktop app
 
-Cross-platform (macOS / Windows / Linux) port of the SwiftUI app, built to be
-faithful to the native experience.
+Cross-platform (macOS / Windows / Linux) desktop app, built to feel native.
 
 ## Stack
 
 - **Backend:** Rust (Tauri v2). It does only what the web layer can't — a
   `scan_folder` command that walks the tree (natural sort, prunes empty
-  folders, video-extension filter, matching the Swift rules) and grants
+  folders, video-extension filter) and grants
   asset-protocol access so the local file can play; `path_exists` backs the
   "folder unavailable" state on the Home screen.
 - **Frontend:** React + TypeScript + Vite, styled with Tailwind CSS v4 and
   shadcn/ui components (Button, Toggle, DropdownMenu, Tooltip, ScrollArea,
-  ContextMenu, Dialog). Playback is a native `<video controls>` (scrubber,
-  fullscreen, PiP for free) fed by `convertFileSrc`. Watched marks, resume
-  progress, notes and recent folders persist in `localStorage` (the
-  `UserDefaults` stand-in).
+  ContextMenu, Dialog). Playback is Video.js (scrubber, speed menu,
+  fullscreen, PiP) fed by `convertFileSrc`, skinned in `player-theme.css`.
+  Watched marks, resume progress, notes and recent folders persist in
+  `localStorage`.
 
 ## Layout
 
