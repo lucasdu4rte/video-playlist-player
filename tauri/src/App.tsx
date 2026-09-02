@@ -86,15 +86,23 @@ export default function App() {
     if (Number.isFinite(t) && t > 3) Watched.setProgress(currentVideo.path, t);
   }, [currentVideo]);
 
-  const parentFolderName = useCallback(
-    (node: FileNode | null) => {
-      if (!node) return "";
+  const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? "";
+
+  // Root-to-leaf folder names, so the breadcrumb shows the whole path rather
+  // than just the folder the video sits in.
+  const folderTrailFor = useCallback(
+    (node: FileNode | null): string[] => {
+      if (!node) return [];
       const ancestors = ancestorsOf(roots, node);
-      const parent = ancestors[0];
-      if (!parent) return rootPath?.split(/[\\/]/).filter(Boolean).pop() ?? "";
-      return parent.split(/[\\/]/).filter(Boolean).pop() ?? "";
+      if (ancestors.length === 0) return rootPath ? [basename(rootPath)] : [];
+      return [...ancestors].reverse().map(basename);
     },
     [roots, rootPath]
+  );
+
+  const parentFolderName = useCallback(
+    (node: FileNode | null) => folderTrailFor(node).at(-1) ?? "",
+    [folderTrailFor]
   );
 
   const playVideo = useCallback(
@@ -523,7 +531,7 @@ export default function App() {
             <ResizablePanel id="main" order={2} minSize={30}>
               <PlayerArea
                 video={currentVideo}
-                folderName={parentFolderName(currentVideo) || rootName}
+                folderTrail={folderTrailFor(currentVideo)}
                 watched={currentVideo ? watched.has(currentVideo.path) : false}
                 nextVideo={nextVideo}
                 autoplayNext={autoplayNext}

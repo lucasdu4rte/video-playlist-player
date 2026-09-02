@@ -70,21 +70,18 @@ export function searchTree(roots: FileNode[], query: string): FileNode[] {
   return walk(roots);
 }
 
-// Ancestor folder paths that must be expanded for `target` to be visible.
+/**
+ * Ancestor folder paths of `target`, innermost first — the order the sidebar
+ * needs to expand them. Reverse it for a root-to-leaf breadcrumb.
+ */
 export function ancestorsOf(roots: FileNode[], target: FileNode): string[] {
-  const trail: string[] = [];
   const found: string[] = [];
   const walk = (items: FileNode[]): boolean => {
     for (const it of items) {
       if (it.path === target.path) return true;
-      if (it.type === "folder" && it.children) {
-        trail.push(it.path);
-        if (walk(it.children)) {
-          found.push(it.path);
-          trail.pop();
-          return true;
-        }
-        trail.pop();
+      if (it.type === "folder" && it.children && walk(it.children)) {
+        found.push(it.path);
+        return true;
       }
     }
     return false;

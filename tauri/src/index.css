@@ -126,3 +126,38 @@
 @utility eyebrow {
   @apply text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground;
 }
+
+/* Transient badge the player flashes on play, pause and seek. */
+.player-flash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  pointer-events: none;
+  z-index: 4;
+  animation: player-flash 0.5s ease-out forwards;
+}
+
+@keyframes player-flash {
+  0% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(0.82);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-flash {
+    animation-duration: 0.01s;
+  }
+}

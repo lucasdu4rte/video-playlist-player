@@ -26,7 +26,8 @@ function formatTime(seconds?: number) {
 
 type Props = {
   video: FileNode | null;
-  folderName: string;
+  /** Folder names from the opened root down to the video's own folder. */
+  folderTrail: string[];
   watched: boolean;
   hasNotes: boolean;
   nextVideo: FileNode | null;
@@ -68,8 +69,12 @@ export function PlayerArea(props: Props) {
           </button>
           {video && (
             <>
-              <ChevronRight className="size-3.5 shrink-0" />
-              <span className="shrink-0">{props.folderName}</span>
+              {props.folderTrail.map((name) => (
+                <span key={name} className="flex min-w-0 items-center gap-2">
+                  <ChevronRight className="size-3.5 shrink-0" />
+                  <span className="max-w-52 truncate">{name}</span>
+                </span>
+              ))}
               <ChevronRight className="size-3.5 shrink-0" />
               <MiddleTruncate
                 text={video.name}
@@ -120,7 +125,9 @@ export function PlayerArea(props: Props) {
         <>
           <div className="flex flex-none items-end justify-between gap-5 px-0.5 pb-5 pt-6">
             <div className="min-w-0">
-              <p className="eyebrow mb-2">{props.folderName}</p>
+              <p className="eyebrow mb-2">
+                {props.folderTrail.at(-1) ?? ""}
+              </p>
               <h1 className="truncate text-[26px] font-semibold tracking-[-0.03em]">
                 {video.name}
               </h1>
