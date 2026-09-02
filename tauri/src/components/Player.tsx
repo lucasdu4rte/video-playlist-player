@@ -45,6 +45,10 @@ export function Player({
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<VjsPlayer | null>(null);
+  // The mount effect runs once, so read the speed through a ref — capturing it
+  // would let a late `loadedmetadata` revert a change made while loading.
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
 
   useEffect(() => {
     if (playerRef.current || !containerRef.current) return;
@@ -64,11 +68,11 @@ export function Player({
     }));
 
     player.ready(() => {
-      player.playbackRate(speed);
+      player.playbackRate(speedRef.current);
     });
 
     player.on("loadedmetadata", () => {
-      player.playbackRate(speed);
+      player.playbackRate(speedRef.current);
       if (autoPlay) {
         if (resumeSeconds > 0) player.currentTime(resumeSeconds);
         const p = player.play();

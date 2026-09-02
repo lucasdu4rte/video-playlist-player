@@ -50,24 +50,33 @@ export default function App() {
   const currentTimeRef = useRef(0);
   const lastSavedRef = useRef(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const wakeWantedRef = useRef(false);
+  const wakePendingRef = useRef(false);
+  const scanTokenRef = useRef(0);
 
   // ---- playback -----------------------------------------------------------
+  // Reads the store, not the `watched` state mirror: within one event the
+  // mirror is a render behind, which would re-save a resume point for a video
+  // that was just marked watched.
   const persistProgress = useCallback(() => {
-    if (!currentVideo || watched.has(currentVideo.path)) return;
+    if (!currentVideo || Watched.contains(currentVideo.path)) return;
     const t = currentTimeRef.current;
     if (Number.isFinite(t) && t > 3) Watched.setProgress(currentVideo.path, t);
-  }, [currentVideo, watched]);
+  }, [currentVideo]);
 
   const playVideo = useCallback(
     (node: FileNode, autoPlay = true) => {
-      if (node.type !== "video" || node.path === currentVideo?.path) return;
+      if (node.type !== "video") return;
       const ancestors = ancestorsOf(roots, node);
       setExpanded((prev) => new Set([...prev, ...ancestors]));
       persistProgress();
       currentTimeRef.current = 0;
       lastSavedRef.current = 0;
       setAutoPlayIntent(autoPlay);
-      setCurrentVideo(node);
+      // Re-selecting the current video remounts the player instead of falling
+      // through, so the banner never sits over a still-playing video.
+      if (node.path === currentVideo?.path) setPlayNonce((n) => n + 1);
+      else setCurrentVideo(node);
       void setWindowTitle(node.name);
     },
     [roots, currentVideo, persistProgress]
@@ -156,20 +165,34 @@ export default function App() {
   };
 
   const acquireWake = async () => {
+    wakeWantedRef.current = true;
+    if (wakeLockRef.current || wakePendingRef.current) return;
+    if (!("wakeLock" in navigator)) return;
+    wakePendingRef.current = true;
     try {
-      if (!wakeLockRef.current && "wakeLock" in navigator)
-        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      const sentinel = await navigator.wakeLock.request("screen");
+      // The platform auto-releases while the document is hidden; clearing the
+      // ref on that event is what lets a later play re-acquire it.
+      sentinel.addEventListener("release", () => {
+        if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
+      });
+      wakeLockRef.current = sentinel;
+      if (!wakeWantedRef.current) void releaseWake();
     } catch {
       /* best effort */
+    } finally {
+      wakePendingRef.current = false;
     }
   };
   const releaseWake = async () => {
+    wakeWantedRef.current = false;
+    const sentinel = wakeLockRef.current;
+    wakeLockRef.current = null;
     try {
-      await wakeLockRef.current?.release();
+      await sentinel?.release();
     } catch {
       /* ignore */
     }
-    wakeLockRef.current = null;
   };
   const onPlayingChange = (playing: boolean) => {
     if (playing) void acquireWake();
@@ -195,20 +218,33 @@ export default function App() {
   );
 
   // ---- folder loading / routing ------------------------------------------
-  const openFolder = useCallback(async (path: string) => {
-    persistProgress();
-    const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-    setIsLoading(true);
-    setHasOpenedFolder(true);
-    setCurrentVideo(null);
-    setPendingWatched(null);
-    setExpanded(new Set());
-    const tree = await scanFolder(path);
-    setRoots(tree);
-    setIsLoading(false);
-    Recents.record(path, name);
-    setRecentsVersion((v) => v + 1);
-  }, [persistProgress]);
+  const openFolder = useCallback(
+    async (path: string) => {
+      persistProgress();
+      void releaseWake();
+      const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+      // Token so a slow scan that resolves after a newer one is discarded
+      // instead of overwriting the folder the user actually opened.
+      const token = ++scanTokenRef.current;
+      setIsLoading(true);
+      setHasOpenedFolder(true);
+      setCurrentVideo(null);
+      setPendingWatched(null);
+      setExpanded(new Set());
+      let tree: FileNode[] = [];
+      try {
+        tree = await scanFolder(path);
+      } catch (e) {
+        console.error("scan_folder failed", e);
+      }
+      if (scanTokenRef.current !== token) return;
+      setRoots(tree);
+      setIsLoading(false);
+      Recents.record(path, name);
+      setRecentsVersion((v) => v + 1);
+    },
+    [persistProgress]
+  );
 
   const selectFolder = useCallback(async () => {
     const path = await pickFolder();
@@ -232,6 +268,7 @@ export default function App() {
   const goHome = useCallback(() => {
     persistProgress();
     void releaseWake();
+    void setWindowTitle("Video Playlist Player");
     setCurrentVideo(null);
     setPendingWatched(null);
     setRoots([]);
@@ -248,6 +285,7 @@ export default function App() {
     toggleNotes,
     playNext,
     playPrevious,
+    handleDrop,
     hasOpenedFolder,
   });
   apiRef.current = {
@@ -256,12 +294,20 @@ export default function App() {
     toggleNotes,
     playNext,
     playPrevious,
+    handleDrop,
     hasOpenedFolder,
   };
 
   useEffect(() => {
     const isMac = navigator.platform.toLowerCase().includes("mac");
     const onKey = (e: KeyboardEvent) => {
+      // Never steal editing keys (⌘←/⌘→ move the caret) from the notes field.
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        /^(input|textarea|select)$/i.test(target?.tagName ?? "")
+      )
+        return;
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
       const api = apiRef.current;
@@ -281,16 +327,29 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Registered once — re-subscribing per video would leave a window where the
+  // async unlisten and the new listen overlap, double-handling or losing a drop.
   useEffect(() => {
     const unlisten = onFolderDrop({
       onOver: () => setDropping(true),
       onLeave: () => setDropping(false),
-      onDrop: handleDrop,
+      onDrop: (paths) => apiRef.current.handleDrop(paths),
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [handleDrop]);
+  }, []);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden && wakeWantedRef.current) void acquireWake();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      void releaseWake();
+    };
+  }, []);
 
   useEffect(() => {
     window.addEventListener("beforeunload", persistProgress);
@@ -304,7 +363,12 @@ export default function App() {
         dropping={dropping}
         onOpenFolder={selectFolder}
         onOpenPath={openFolder}
-        onChanged={() => setRecentsVersion((v) => v + 1)}
+        onChanged={() => {
+          // Removing a folder wipes its marks in the store; mirror that here or
+          // the sidebar keeps rendering checks the store no longer holds.
+          setWatchedState(new Set(Watched.watched));
+          setRecentsVersion((v) => v + 1);
+        }}
       />
     );
   }

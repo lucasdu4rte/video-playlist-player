@@ -79,19 +79,22 @@ fn natural_cmp(a: &str, b: &str) -> Ordering {
 }
 
 fn build_tree(dir: &Path) -> Vec<Node> {
-    let mut paths: Vec<PathBuf> = match std::fs::read_dir(dir) {
+    // file_type() comes from the directory entry and does NOT follow symlinks,
+    // unlike is_dir(). A symlink loop would otherwise recurse until the stack
+    // overflows, which aborts the process rather than raising a catchable panic.
+    let mut entries: Vec<(PathBuf, bool)> = match std::fs::read_dir(dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| !file_name(p).starts_with('.'))
+            .filter_map(|e| Some((e.path(), e.file_type().ok()?.is_dir())))
+            .filter(|(p, _)| !file_name(p).starts_with('.'))
             .collect(),
         Err(_) => return vec![],
     };
-    paths.sort_by(|a, b| natural_cmp(&file_name(a), &file_name(b)));
+    entries.sort_by(|a, b| natural_cmp(&file_name(&a.0), &file_name(&b.0)));
 
     let mut out = Vec::new();
-    for p in paths {
-        if p.is_dir() {
+    for (p, is_dir) in entries {
+        if is_dir {
             let children = build_tree(&p);
             if !children.is_empty() {
                 out.push(Node {
@@ -113,7 +116,9 @@ fn build_tree(dir: &Path) -> Vec<Node> {
     out
 }
 
-#[tauri::command]
+// `async` so Tauri runs these off the main thread — the recursive walk would
+// otherwise freeze the window for the whole scan.
+#[tauri::command(async)]
 fn scan_folder(app: tauri::AppHandle, path: String) -> Vec<Node> {
     let root = PathBuf::from(&path);
     // Grant playback access to everything under the opened folder — the
@@ -122,7 +127,7 @@ fn scan_folder(app: tauri::AppHandle, path: String) -> Vec<Node> {
     build_tree(&root)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn path_exists(path: String) -> bool {
     Path::new(&path).is_dir()
 }

@@ -61,12 +61,16 @@ type RemoveCandidate = {
   notesCount: number;
 };
 
+type DialogState =
+  | { kind: "unavailable"; folder: RecentFolder }
+  | { kind: "confirm"; candidate: RemoveCandidate }
+  | null;
+
 export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
   const [page, setPage] = useState(0);
-  const [unavailable, setUnavailable] = useState<RecentFolder | null>(null);
-  const [removeCandidate, setRemoveCandidate] = useState<RemoveCandidate | null>(
-    null
-  );
+  // One dialog with two steps, not two dialogs: mounting a second modal while
+  // the first is still animating out leaves body pointer-events stuck at none.
+  const [dialog, setDialog] = useState<DialogState>(null);
 
   const folders = Recents.folders;
   const pageCount = Recents.pageCount;
@@ -81,21 +85,21 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
 
   const openFolder = async (folder: RecentFolder) => {
     if (await pathExists(folder.path)) onOpenPath(folder.path);
-    else setUnavailable(folder);
+    else setDialog({ kind: "unavailable", folder });
   };
 
   const requestRemove = (folder: RecentFolder) => {
     const w = Watched.watchedCount(folder.path);
     const n = Notes.notesCount(folder.path);
     if (w === 0 && n === 0) performRemove(folder);
-    else setRemoveCandidate({ folder, watchedCount: w, notesCount: n });
+    else setDialog({ kind: "confirm", candidate: { folder, watchedCount: w, notesCount: n } });
   };
 
   const performRemove = (folder: RecentFolder) => {
     Watched.removeAll(folder.path);
     Notes.removeAll(folder.path);
     Recents.remove(folder.id);
-    setRemoveCandidate(null);
+    setDialog(null);
     onChanged();
   };
 
@@ -138,7 +142,6 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
                   onOpen={() => openFolder(folder)}
                   onReveal={() => void revealInFinder(folder.path)}
                   onRemove={() => requestRemove(folder)}
-                  onUnavailable={() => setUnavailable(folder)}
                 />
               ))}
             </div>
@@ -173,56 +176,52 @@ export function Home({ dropping, onOpenFolder, onOpenPath, onChanged }: Props) {
         <div className="pointer-events-none fixed inset-2 z-40 rounded-xl border-2 border-dashed border-primary" />
       )}
 
-      <Dialog open={!!unavailable} onOpenChange={(o) => !o && setUnavailable(null)}>
+      <Dialog open={!!dialog} onOpenChange={(o) => !o && setDialog(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Folder is not available</DialogTitle>
-            <DialogDescription>
-              “{unavailable?.name}” can’t be opened. The disk may be
-              disconnected, the folder may have been moved or deleted, or access
-              was revoked.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setUnavailable(null)}>
-              Keep
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                const f = unavailable!;
-                setUnavailable(null);
-                requestRemove(f);
-              }}
-            >
-              Remove from Recents
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!removeCandidate}
-        onOpenChange={(o) => !o && setRemoveCandidate(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove from Recents?</DialogTitle>
-            <DialogDescription>
-              {removeCandidate && removalMessage(removeCandidate)}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setRemoveCandidate(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => performRemove(removeCandidate!.folder)}
-            >
-              Remove
-            </Button>
-          </DialogFooter>
+          {dialog?.kind === "unavailable" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Folder is not available</DialogTitle>
+                <DialogDescription>
+                  “{dialog.folder.name}” can’t be opened. The disk may be
+                  disconnected, the folder may have been moved or deleted, or
+                  access was revoked.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setDialog(null)}>
+                  Keep
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => requestRemove(dialog.folder)}
+                >
+                  Remove from Recents
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+          {dialog?.kind === "confirm" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Remove from Recents?</DialogTitle>
+                <DialogDescription>
+                  {removalMessage(dialog.candidate)}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setDialog(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => performRemove(dialog.candidate.folder)}
+                >
+                  Remove
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -245,13 +244,11 @@ function RecentCard({
   onOpen,
   onReveal,
   onRemove,
-  onUnavailable,
 }: {
   folder: RecentFolder;
   onOpen: () => void;
   onReveal: () => void;
   onRemove: () => void;
-  onUnavailable: () => void;
 }) {
   const [available, setAvailable] = useState(true);
 
