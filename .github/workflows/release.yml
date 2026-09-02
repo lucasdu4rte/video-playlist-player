@@ -114,7 +114,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
         run: |
-          node -e "JSON.parse(process.env.ARTIFACTS).forEach((p) => console.log(p))" |
+          node -e "const b=JSON.parse(process.env.ARTIFACTS);if(!b.length)throw new Error('the build produced no bundles');b.forEach((p) => console.log(p))" |
             while IFS= read -r artifact; do
               gh release upload "$TAG" "$artifact" --clobber
             done
