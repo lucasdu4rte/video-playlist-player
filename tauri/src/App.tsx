@@ -458,7 +458,7 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <AppHeader onHome={goHome} onShowShortcuts={() => setShowShortcuts(true)} />
+      <AppHeader canGoBack={hasOpenedFolder} onHome={goHome} onShowShortcuts={() => setShowShortcuts(true)} />
 
       {!hasOpenedFolder ? (
         <Home

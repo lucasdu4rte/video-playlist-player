@@ -1,4 +1,4 @@
-import { CircleHelp, Settings2 } from "lucide-react";
+import { CircleHelp, Settings2, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -9,6 +9,7 @@ import {
 const IS_MAC = navigator.platform.toLowerCase().includes("mac");
 
 type Props = {
+  canGoBack: boolean;
   onHome: () => void;
   onShowShortcuts: () => void;
 };
@@ -16,13 +17,30 @@ type Props = {
 // The macOS window uses an overlay title bar, so the real traffic lights float
 // over this strip — hence the left inset. Elsewhere the OS draws its own bar
 // above us and no inset is needed.
-export function AppHeader({ onHome, onShowShortcuts }: Props) {
+export function AppHeader({ canGoBack, onHome, onShowShortcuts }: Props) {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-[62px] flex-none items-center gap-5 border-b bg-chrome px-6"
+      className="flex h-[68px] flex-none items-center gap-3 border-b bg-chrome px-6 pt-2"
       style={IS_MAC ? { paddingLeft: 82 } : undefined}
     >
+      {canGoBack && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onHome}
+              aria-label="Back to home"
+              className="-ml-1 shrink-0 text-muted-foreground"
+            >
+              <ChevronLeft className="size-[18px]" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Back to home</TooltipContent>
+        </Tooltip>
+      )}
+
       <button
         onClick={onHome}
         className="flex items-center gap-2.5 font-bold"
