@@ -30,6 +30,11 @@
   align-items: center;
   padding: 0 2px;
   top: 0;
+  z-index: 0; /* stays under the menu popups */
+}
+
+.video-js .vjs-control-bar .vjs-menu-button-popup {
+  z-index: 2;
 }
 
 .video-js .vjs-progress-holder,
@@ -74,15 +79,21 @@
 }
 
 /* scrub preview: dark chip instead of the stock white one */
-.video-js .vjs-time-tooltip,
-.video-js .vjs-mouse-display .vjs-time-tooltip {
-  background: var(--popover);
-  color: var(--popover-foreground);
+/* Video.js sizes this tooltip in em from the player's 10px base, and its own
+   rules are specific enough to beat a plain override — hence !important. */
+.video-js .vjs-progress-control .vjs-time-tooltip,
+.video-js .vjs-progress-control .vjs-mouse-display .vjs-time-tooltip,
+.video-js .vjs-progress-control:hover .vjs-time-tooltip,
+.video-js .vjs-progress-control .vjs-play-progress .vjs-time-tooltip {
+  font-size: 18px !important;
+  padding: 5px 9px !important;
+  background: rgba(20, 20, 22, 0.95);
+  color: #fff;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 6px;
-  font-size: 12px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
   font-family: inherit;
+  line-height: 1.2;
 }
 
 /* --- buttons and time --------------------------------------------------- */
@@ -105,8 +116,8 @@
   align-items: center;
   width: auto;
   min-width: 0;
-  padding: 0 3px;
-  font-size: 16px;
+  padding: 0 4px;
+  font-size: 18px;
   font-variant-numeric: tabular-nums;
   line-height: 40px;
 }

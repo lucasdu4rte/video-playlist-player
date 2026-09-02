@@ -80,7 +80,10 @@ export function Player({
       // seek bar pulled onto its own row above them by the theme.
       controlBar: {
         volumePanel: { inline: true },
+        // progressControl comes first so it paints *under* the menu popups;
+        // the theme moves it onto its own row above via `order`.
         children: [
+          "progressControl",
           "playToggle",
           "volumePanel",
           "currentTimeDisplay",
@@ -90,7 +93,6 @@ export function Player({
           "playbackRateMenuButton",
           "pictureInPictureToggle",
           "fullscreenToggle",
-          "progressControl",
         ],
       },
       sources: [{ src: toMediaSrc(path), ...(type ? { type } : {}) }],
