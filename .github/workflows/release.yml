@@ -18,7 +18,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -70,9 +70,9 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: tauri/.node-version
           cache: npm
@@ -99,7 +99,7 @@ jobs:
         working-directory: tauri
         run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -114,10 +114,26 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
         run: |
-          node -e "const b=JSON.parse(process.env.ARTIFACTS);if(!b.length)throw new Error('the build produced no bundles');b.forEach((p) => console.log(p))" |
-            while IFS= read -r artifact; do
-              gh release upload "$TAG" "$artifact" --clobber
-            done
+          # tauri-action also reports the macOS .app, which is a directory and
+          # cannot be a release asset — the .dmg beside it already contains it.
+          # The list goes through a file rather than a pipe so the counter
+          # survives (a piped `while` runs in a subshell).
+          list="$RUNNER_TEMP/artifacts.txt"
+          node -e "JSON.parse(process.env.ARTIFACTS).forEach((p) => console.log(p))" > "$list"
+          uploaded=0
+          while IFS= read -r artifact; do
+            [ -z "$artifact" ] && continue
+            if [ -d "$artifact" ]; then
+              echo "skipping directory bundle: $artifact"
+              continue
+            fi
+            gh release upload "$TAG" "$artifact" --clobber
+            uploaded=$((uploaded + 1))
+          done < "$list"
+          if [ "$uploaded" -eq 0 ]; then
+            echo "the build produced no uploadable bundles" >&2
+            exit 1
+          fi
 
   publish:
     needs: [version, build]
