@@ -16,25 +16,28 @@ export type FileNode = {
 // inspected. This whole branch is dead in the shipped app.
 export const isTauri = "__TAURI_INTERNALS__" in window;
 
+function demoVideos(folder: string, count: number): FileNode[] {
+  return Array.from({ length: count }, (_, i) => {
+    const name = `${i + 1} Lesson ${i + 1}.mp4`;
+    return { path: `${folder}/${name}`, name, type: "video" };
+  });
+}
+
+// Long enough (~200 rows) to exercise sidebar scrolling.
 const DEMO_TREE: FileNode[] = [
-  {
-    path: "/Demo/01 Introduction",
-    name: "01 Introduction",
-    type: "folder",
-    children: [
-      { path: "/Demo/01 Introduction/01 Welcome.mp4", name: "01 Welcome.mp4", type: "video" },
-      { path: "/Demo/01 Introduction/02 Setup.mp4", name: "02 Setup.mp4", type: "video" },
-    ],
-  },
-  {
-    path: "/Demo/02 Deep Dive",
-    name: "02 Deep Dive",
-    type: "folder",
-    children: [
-      { path: "/Demo/02 Deep Dive/2 Basics.mp4", name: "2 Basics.mp4", type: "video" },
-      { path: "/Demo/02 Deep Dive/10 Advanced.mp4", name: "10 Advanced.mp4", type: "video" },
-    ],
-  },
+  ...Array.from({ length: 10 }, (_, i): FileNode => {
+    const path = `/Demo/${String(i + 1).padStart(2, "0")} Module ${i + 1}`;
+    const exercises = `${path}/Exercises`;
+    return {
+      path,
+      name: path.slice("/Demo/".length),
+      type: "folder",
+      children: [
+        ...demoVideos(path, 15),
+        { path: exercises, name: "Exercises", type: "folder", children: demoVideos(exercises, 3) },
+      ],
+    };
+  }),
   { path: "/Demo/README.mp4", name: "README.mp4", type: "video" },
 ];
 
