@@ -119,7 +119,7 @@ export function Sidebar(props: Props) {
           </div>
         </div>
       ) : (
-        <ScrollArea className="-mx-1 flex-1">
+        <ScrollArea className="-mx-1 min-h-0 flex-1">
           <div className="px-1">
             {props.roots.map((node) => (
               <Row key={node.path} node={node} depth={0} {...props} />
