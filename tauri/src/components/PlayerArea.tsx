@@ -100,9 +100,9 @@ export function PlayerArea(props: Props) {
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center">
+      <div className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">
         <div
-          className="relative aspect-video max-h-full w-full max-w-[1100px] overflow-hidden rounded-xl border bg-black"
+          className="relative aspect-video w-[min(100%,1100px,100cqh*16/9)] overflow-hidden rounded-xl border bg-black"
           style={{ containIntrinsicSize: "auto" }}
         >
           {video ? (
