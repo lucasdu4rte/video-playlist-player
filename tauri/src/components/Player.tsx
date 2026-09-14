@@ -130,7 +130,9 @@ export function Player({
           if (typeof rate === "number" && rate !== speed) onSpeedChange(rate);
         }}
       >
-        <MediaProvider />
+        {/* Vidstack sizes the <video> by width at 16:9, so a short player crops it; filling the height lets object-fit letterbox instead.
+            Needs !important: Vidstack's CSS is unlayered and beats any Tailwind utility regardless of specificity. */}
+        <MediaProvider className="[&_video]:h-full!" />
         <DefaultVideoLayout icons={defaultLayoutIcons} />
       </MediaPlayer>
 
