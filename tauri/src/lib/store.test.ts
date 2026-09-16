@@ -106,6 +106,52 @@ describe("video stamps and dirty tracking", () => {
   });
 });
 
+describe("removeAll batching", () => {
+  it("dispatches exactly one dirty event when clearing watched videos", async () => {
+    const s = await freshStore();
+    s.Watched.setWatched("/lib/a.mp4", true);
+    s.Watched.setWatched("/lib/b.mp4", true);
+    s.Watched.setWatched("/lib/c.mp4", true);
+    s.Dirty.take();
+    const listener = vi.fn();
+    s.LocalChanges.addEventListener("dirty", listener);
+    s.Watched.removeAll("/lib");
+    expect(listener).toHaveBeenCalledOnce();
+    expect(s.Dirty.take().videos.sort()).toEqual([
+      "/lib/a.mp4",
+      "/lib/b.mp4",
+      "/lib/c.mp4",
+    ]);
+  });
+
+  it("dispatches exactly one dirty event when clearing notes", async () => {
+    const s = await freshStore();
+    s.Notes.setNote("one", "/lib/a.mp4");
+    s.Notes.setNote("two", "/lib/b.mp4");
+    s.Notes.setNote("three", "/lib/c.mp4");
+    s.Dirty.take();
+    const listener = vi.fn();
+    s.LocalChanges.addEventListener("dirty", listener);
+    s.Notes.removeAll("/lib");
+    expect(listener).toHaveBeenCalledOnce();
+    expect(s.Dirty.take().notes.sort()).toEqual([
+      "/lib/a.mp4",
+      "/lib/b.mp4",
+      "/lib/c.mp4",
+    ]);
+  });
+
+  it("dispatches no event when there is nothing to clear", async () => {
+    const s = await freshStore();
+    const listener = vi.fn();
+    s.LocalChanges.addEventListener("dirty", listener);
+    s.Watched.removeAll("/empty");
+    s.Notes.removeAll("/empty");
+    expect(listener).not.toHaveBeenCalled();
+    expect(s.Dirty.isEmpty()).toBe(true);
+  });
+});
+
 describe("remote apply", () => {
   it("applies a video record without marking it dirty", async () => {
     const s = await freshStore();

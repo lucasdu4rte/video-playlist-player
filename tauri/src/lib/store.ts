@@ -51,6 +51,13 @@ class StampMap {
     this.stamps[path] = at;
     write(this.key, this.stamps);
   }
+  setMany(paths: string[], at: number) {
+    if (paths.length === 0) return;
+    paths.forEach((p) => {
+      this.stamps[p] = at;
+    });
+    write(this.key, this.stamps);
+  }
 }
 
 const videoStamps = new StampMap(KEYS.videoStamps);
@@ -70,13 +77,21 @@ class DirtyStore {
     this.notes = new Set(saved.notes);
   }
   markVideo(path: string) {
-    videoStamps.set(path, Date.now());
-    this.videos.add(path);
-    this.changed();
+    this.markVideos([path]);
   }
   markNote(path: string) {
-    noteStamps.set(path, Date.now());
-    this.notes.add(path);
+    this.markNotes([path]);
+  }
+  markVideos(paths: string[]) {
+    if (paths.length === 0) return;
+    videoStamps.setMany(paths, Date.now());
+    paths.forEach((p) => this.videos.add(p));
+    this.changed();
+  }
+  markNotes(paths: string[]) {
+    if (paths.length === 0) return;
+    noteStamps.setMany(paths, Date.now());
+    paths.forEach((p) => this.notes.add(p));
     this.changed();
   }
   take(): DirtyBatch {
@@ -158,7 +173,7 @@ class WatchedStore {
     }
     write(KEYS.watched, [...this.watched]);
     write(KEYS.progress, this.progress);
-    cleared.forEach((p) => Dirty.markVideo(p));
+    Dirty.markVideos([...cleared]);
   }
   private writeWatched(path: string, value: boolean) {
     if (value) {
@@ -202,7 +217,7 @@ class NotesStore {
     if (cleared.length === 0) return;
     cleared.forEach((p) => delete this.notes[p]);
     write(KEYS.notes, this.notes);
-    cleared.forEach((p) => Dirty.markNote(p));
+    Dirty.markNotes(cleared);
   }
   private writeNote(text: string, path: string) {
     if (text.length === 0) delete this.notes[path];
