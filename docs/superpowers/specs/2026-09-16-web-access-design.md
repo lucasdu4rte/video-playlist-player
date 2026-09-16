@@ -44,8 +44,9 @@ folder has different paths on macOS and Windows.
 - Each machine keeps its own `library_id → absolute path` map. Opening the same
   course on a second machine prompts the user to link it to an existing library.
 - Removing a folder from Recents no longer discards its id; the
-  `path → library_id` map outlives removal, so reopening the folder keeps its
-  synced progress.
+  `path → library_id` map outlives removal, so reopening the folder reuses
+  the same library. Clearing the folder's watched marks and notes on removal
+  is synced as a deletion to every device.
 - `localStorage` stays keyed by absolute path. Translation to
   `(library_id, rel_path)` happens only at the sync boundary — no data
   migration, no changes to components.

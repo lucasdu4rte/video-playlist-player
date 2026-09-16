@@ -204,6 +204,7 @@ The plans refined the contract above in these places. Where a line here disagree
 - **`libraryPath.ts` (plans 4–5):** `relativizeTree(nodes, root, sep)`, `webRoot(libraryId)`, `parseWebRoot(root)`, `toWebTree(libraryId, nodes)`. A web library's root is `"/" + libraryId` with no trailing slash (`webPath(id, "")` yields a trailing slash and is not used as a root).
 - **`sharing.ts` (plan 4):** `subscribeSharing`, `sharingAccount`, `onWebLibraries`, `trackAccount`; `setOnWeb(libraryId, value)`. The `on_web` state lives in this module's memory, loaded from Supabase on sign-in.
 - **Web modules (plan 5):** `host.ts` (`HOST_OFFLINE_AFTER_MS`, `HostStatus`, `MediaFailure`, `MediaUnavailableError`, `isHostOnline`, `hostStatus`, `signMediaUrl`), `webLibrary.ts` (`WebLibrary`, `listWebLibraries`, `loadWebTree`), `webAuth.ts` (`signInWithGoogleRedirect`, `sendEmailLink`, `isAllowed`); components `SignInScreen`, `WebGate`, `WebHome`. `upsertLibrary` is a no-op outside Tauri.
+- **Removing a folder from Recents (plan 1 → plan 2):** `Watched.removeAll` / `Notes.removeAll` stamp and mark every cleared key dirty, so the next push erases that folder's progress and notes on every device and on the web (approved during design). Plan 2 must change the remove-confirmation copy in `Home.tsx` to say the data is erased on all devices when the user is signed in. The library id itself survives removal.
 - **Temporary dev hook (plan 3 → 4):** `src/lib/devServer.ts` exposes `window.devServer` in dev builds; plan 4 deletes it.
 
 ## Known Risks Carried Into Execution
