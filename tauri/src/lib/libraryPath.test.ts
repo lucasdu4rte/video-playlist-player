@@ -59,6 +59,10 @@ describe("webPath / parseWebPath", () => {
     expect(parseWebPath("lib-1/a.mp4")).toBeNull();
   });
 
+  it("rejects an empty library id", () => {
+    expect(parseWebPath("//a.mp4")).toBeNull();
+  });
+
   it("is consistent with toRelPath using the library root", () => {
     expect(toRelPath(webPath("lib-1", "a/b.mp4"), "/lib-1", "/")).toBe("a/b.mp4");
   });

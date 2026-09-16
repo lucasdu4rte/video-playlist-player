@@ -22,5 +22,7 @@ export function parseWebPath(
   if (slash < 0) return null;
   const relPath = path.slice(slash + 1);
   if (!relPath) return null;
-  return { libraryId: path.slice(1, slash), relPath };
+  const libraryId = path.slice(1, slash);
+  if (!libraryId) return null;
+  return { libraryId, relPath };
 }
