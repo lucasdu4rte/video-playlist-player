@@ -1,3 +1,5 @@
+import { SEP } from "@/lib/platform";
+
 const KEYS = {
   watched: "watchedPaths.v1",
   progress: "videoProgress.v1",
@@ -20,11 +22,6 @@ function read<T>(key: string, fallback: T): T {
 function write(key: string, value: unknown) {
   localStorage.setItem(key, JSON.stringify(value));
 }
-
-// Rust returns backslash paths on Windows, forward slashes elsewhere. Decide
-// once from the platform: sniffing each path would pick "\" for a POSIX folder
-// whose name merely contains a backslash.
-const SEP = navigator.userAgent.includes("Windows") ? "\\" : "/";
 
 // Appended unconditionally, so a root path yields "//" (or "C:\\") and matches
 // nothing — trimming a trailing separator here would make "remove everything
