@@ -224,6 +224,16 @@ class RecentFoldersStore {
   folders = read<RecentFolder[]>(KEYS.recents, []).sort(
     (a, b) => b.lastOpenedAt - a.lastOpenedAt
   );
+  // Outlives removal from recents: the id keys synced progress, so reopening a
+  // folder must get the same one back.
+  private libraryIds = read<Record<string, string>>(KEYS.libraryIds, {});
+
+  constructor() {
+    const missing = this.folders.filter((f) => !(f.path in this.libraryIds));
+    if (missing.length === 0) return;
+    missing.forEach((f) => (this.libraryIds[f.path] = f.id));
+    write(KEYS.libraryIds, this.libraryIds);
+  }
 
   get pageCount() {
     const total = this.folders.length;
@@ -235,6 +245,26 @@ class RecentFoldersStore {
     const start = clamped * PER_PAGE;
     return this.folders.slice(start, start + PER_PAGE);
   }
+  libraryIdFor(path: string): string {
+    const known = this.libraryIds[path];
+    if (known) return known;
+    const id = crypto.randomUUID();
+    this.libraryIds[path] = id;
+    write(KEYS.libraryIds, this.libraryIds);
+    return id;
+  }
+  pathFor(libraryId: string): string | null {
+    const entry = Object.entries(this.libraryIds).find(([, id]) => id === libraryId);
+    return entry ? entry[0] : null;
+  }
+  link(path: string, libraryId: string) {
+    this.libraryIds[path] = libraryId;
+    write(KEYS.libraryIds, this.libraryIds);
+    const folder = this.folders.find((f) => f.path === path);
+    if (!folder) return;
+    folder.id = libraryId;
+    this.persist();
+  }
   record(path: string, name: string) {
     const now = Date.now();
     const idx = this.folders.findIndex((f) => f.path === path);
@@ -244,7 +274,7 @@ class RecentFoldersStore {
       existing.name = name;
       this.folders.unshift(existing);
     } else {
-      this.folders.unshift({ id: crypto.randomUUID(), name, path, lastOpenedAt: now });
+      this.folders.unshift({ id: this.libraryIdFor(path), name, path, lastOpenedAt: now });
     }
     this.persist();
   }

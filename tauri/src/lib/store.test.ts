@@ -155,3 +155,43 @@ describe("remote apply", () => {
     expect(s.noteRecord("/lib/a.mp4")).toEqual({ value: "old", updatedAt: 0 });
   });
 });
+
+describe("library ids", () => {
+  it("reuses the recent folder id for an existing entry", async () => {
+    vi.resetModules();
+    const storage = memoryStorage();
+    storage.setItem(
+      "recentFolders.v1",
+      JSON.stringify([{ id: "old-id", name: "Rust", path: "/c/Rust", lastOpenedAt: 1 }])
+    );
+    vi.stubGlobal("localStorage", storage);
+    const s = await import("./store");
+    expect(s.Recents.libraryIdFor("/c/Rust")).toBe("old-id");
+  });
+
+  it("keeps the id after the folder is removed from recents", async () => {
+    const s = await freshStore();
+    s.Recents.record("/c/Rust", "Rust");
+    const id = s.Recents.libraryIdFor("/c/Rust");
+    s.Recents.remove(s.Recents.folders[0].id);
+    s.Recents.record("/c/Rust", "Rust");
+    expect(s.Recents.folders[0].id).toBe(id);
+    expect(s.Recents.libraryIdFor("/c/Rust")).toBe(id);
+  });
+
+  it("maps an id back to its path", async () => {
+    const s = await freshStore();
+    const id = s.Recents.libraryIdFor("/c/Rust");
+    expect(s.Recents.pathFor(id)).toBe("/c/Rust");
+    expect(s.Recents.pathFor("unknown")).toBeNull();
+  });
+
+  it("links a path to an existing library id", async () => {
+    const s = await freshStore();
+    s.Recents.record("D:/Rust", "Rust");
+    s.Recents.link("D:/Rust", "remote-id");
+    expect(s.Recents.libraryIdFor("D:/Rust")).toBe("remote-id");
+    expect(s.Recents.folders[0].id).toBe("remote-id");
+    expect(s.Recents.pathFor("remote-id")).toBe("D:/Rust");
+  });
+});
