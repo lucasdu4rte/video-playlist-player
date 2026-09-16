@@ -194,4 +194,14 @@ describe("library ids", () => {
     expect(s.Recents.folders[0].id).toBe("remote-id");
     expect(s.Recents.pathFor("remote-id")).toBe("D:/Rust");
   });
+
+  it("links a path that is not in recents yet", async () => {
+    const s = await freshStore();
+    s.Recents.link("/c/New", "remote-id");
+    expect(s.Recents.libraryIdFor("/c/New")).toBe("remote-id");
+    expect(s.Recents.pathFor("remote-id")).toBe("/c/New");
+    expect(s.Recents.folders).toEqual([]);
+    s.Recents.record("/c/New", "New");
+    expect(s.Recents.folders[0].id).toBe("remote-id");
+  });
 });
