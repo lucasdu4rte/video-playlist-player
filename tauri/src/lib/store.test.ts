@@ -152,6 +152,27 @@ describe("removeAll batching", () => {
   });
 });
 
+describe("monotonic stamps", () => {
+  it("keeps a video stamp ahead of an applied remote one", async () => {
+    const s = await freshStore();
+    s.applyVideoRecord("/lib/a.mp4", {
+      watched: false,
+      position: null,
+      duration: null,
+      updatedAt: 50_000,
+    });
+    s.Watched.setWatched("/lib/a.mp4", true);
+    expect(s.videoRecord("/lib/a.mp4").updatedAt).toBe(50_001);
+  });
+
+  it("keeps a note stamp ahead of an applied remote one", async () => {
+    const s = await freshStore();
+    s.applyNoteRecord("/lib/a.mp4", { value: "remote", updatedAt: 50_000 });
+    s.Notes.setNote("local", "/lib/a.mp4");
+    expect(s.noteRecord("/lib/a.mp4").updatedAt).toBe(50_001);
+  });
+});
+
 describe("remote apply", () => {
   it("applies a video record without marking it dirty", async () => {
     const s = await freshStore();

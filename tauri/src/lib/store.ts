@@ -51,10 +51,13 @@ class StampMap {
     this.stamps[path] = at;
     write(this.key, this.stamps);
   }
-  setMany(paths: string[], at: number) {
+  // Keeps stamps monotonic per path so a local edit made after applying a
+  // remote record from a fast clock still stamps ahead of it and wins.
+  bumpMany(paths: string[]) {
     if (paths.length === 0) return;
+    const now = Date.now();
     paths.forEach((p) => {
-      this.stamps[p] = at;
+      this.stamps[p] = Math.max(now, this.get(p) + 1);
     });
     write(this.key, this.stamps);
   }
@@ -84,13 +87,13 @@ class DirtyStore {
   }
   markVideos(paths: string[]) {
     if (paths.length === 0) return;
-    videoStamps.setMany(paths, Date.now());
+    videoStamps.bumpMany(paths);
     paths.forEach((p) => this.videos.add(p));
     this.changed();
   }
   markNotes(paths: string[]) {
     if (paths.length === 0) return;
-    noteStamps.setMany(paths, Date.now());
+    noteStamps.bumpMany(paths);
     paths.forEach((p) => this.notes.add(p));
     this.changed();
   }
