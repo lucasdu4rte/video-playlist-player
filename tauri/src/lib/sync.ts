@@ -41,6 +41,7 @@ type Synced<Row> = Row & { synced_at: string };
 
 let account: Account | null = null;
 let remoteLibraries: RemoteLibrary[] = [];
+let librariesLoaded = false;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let queue: Promise<void> = Promise.resolve();
 
@@ -125,6 +126,7 @@ async function refreshLibraries(userId: string) {
   const { data, error } = await supabase.from("libraries").select("id, name").eq("owner_id", userId);
   if (error) throw error;
   remoteLibraries = data as RemoteLibrary[];
+  librariesLoaded = true;
 }
 
 type PulledRow = { library_id: string; rel_path: string };
@@ -230,15 +232,38 @@ export function upsertLibrary(libraryId: string, name: string): Promise<void> {
   return serialized(() => registerLibrary(libraryId, name));
 }
 
-/** Registers a folder opened while signed in, or returns the choice the user has to make first. */
-export function registerOpenedLibrary(path: string, name: string): LinkRequest | null {
+/**
+ * Registers a folder opened while signed in, or resolves to the choice the
+ * user has to make first. The decision runs inside the sync queue, after the
+ * library list has loaded at least once this sign-in — deciding against a
+ * still-empty `remoteLibraries` right after sign-in would register a folder
+ * that actually belongs on another device as a brand-new (duplicate) library.
+ * Never rejects: a queue failure just means no link dialog this time.
+ */
+export async function registerOpenedLibrary(path: string, name: string): Promise<LinkRequest | null> {
   if (!account) return null;
-  const id = Recents.libraryIdFor(path);
-  const known = remoteLibraries.some((library) => library.id === id);
-  const candidates = known ? [] : unmappedLibraries();
-  if (candidates.length > 0) return { path, name, candidates };
-  upsertLibrary(id, name).catch((error: unknown) => console.error("library sync failed", error));
-  return null;
+  const userId = account.userId;
+  let request: LinkRequest | null = null;
+  try {
+    await serialized(async () => {
+      if (!librariesLoaded) await refreshLibraries(userId);
+      const id = Recents.libraryIdFor(path);
+      const known = remoteLibraries.some((library) => library.id === id);
+      const candidates = known ? [] : unmappedLibraries();
+      if (candidates.length > 0) {
+        request = { path, name, candidates };
+        return;
+      }
+      // registerLibrary, not the queued upsertLibrary: we're already inside
+      // the queue, and awaiting upsertLibrary here would deadlock on the
+      // very task that's running it.
+      await registerLibrary(id, name);
+    });
+  } catch (error) {
+    console.error("library sync failed", error);
+    return null;
+  }
+  return request;
 }
 
 export async function linkLibrary(path: string, libraryId: string, name: string): Promise<void> {
@@ -275,5 +300,6 @@ export function startSync(signedIn: Account): () => void {
     pushTimer = null;
     account = null;
     remoteLibraries = [];
+    librariesLoaded = false;
   };
 }

@@ -312,7 +312,9 @@ export default function App() {
       setRoots(tree);
       setIsLoading(false);
       Recents.record(path, name);
-      setLinkRequest(registerOpenedLibrary(path, name));
+      void registerOpenedLibrary(path, name).then((request) => {
+        if (scanTokenRef.current === token) setLinkRequest(request);
+      });
       bumpRecents((v) => v + 1);
 
       // Resuming from the home screen: select the video once the tree is in.
