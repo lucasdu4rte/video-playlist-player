@@ -84,6 +84,34 @@ describe("toSyncRows", () => {
       ["lib-1", "a.mp4"],
     ]);
   });
+
+  it("drops a path whose only place has a backslash in its rel_path, without restoring it", () => {
+    const rows = toSyncRows(
+      { videos: ["/Users/me/Rust/a\\b.mp4"], notes: ["/Users/me/Rust/c\\d.mp4"] },
+      posixLibrary,
+      "/",
+      read
+    );
+
+    expect(rows.videos).toEqual([]);
+    expect(rows.notes).toEqual([]);
+    expect(rows.unmatched).toEqual({ videos: [], notes: [] });
+    expect(rows.invalid).toEqual({
+      videos: ["/Users/me/Rust/a\\b.mp4"],
+      notes: ["/Users/me/Rust/c\\d.mp4"],
+    });
+  });
+
+  it("stamps a legacy zero updatedAt as just after the epoch", () => {
+    const rows = toSyncRows(
+      { videos: ["/Users/me/Rust/a.mp4"], notes: [] },
+      posixLibrary,
+      "/",
+      { video: () => ({ ...watchedVideo, updatedAt: 0 }), note: read.note }
+    );
+
+    expect(rows.videos[0].updated_at).toBe("1970-01-01T00:00:00.001Z");
+  });
 });
 
 describe("toLocalVideos / toLocalNotes", () => {

@@ -29,28 +29,39 @@ export type RecordReaders = {
 type Place = { libraryId: string; relPath: string };
 
 // Nested roots are separate libraries, so one file can belong to several.
+// A rel_path containing a backslash fails the SQL CHECK constraint even on
+// POSIX (a literal backslash in a filename), so such a place is dropped here
+// rather than sent to the server.
 function placesOf(path: string, libraries: MappedLibrary[], sep: string): Place[] {
   return libraries.flatMap((library) => {
     const relPath = toRelPath(path, library.root, sep);
-    return relPath === null ? [] : [{ libraryId: library.id, relPath }];
+    return relPath === null || relPath.includes("\\") ? [] : [{ libraryId: library.id, relPath }];
   });
 }
 
-const iso = (ms: number) => new Date(ms).toISOString();
+function hasAnyPlace(path: string, libraries: MappedLibrary[], sep: string): boolean {
+  return libraries.some((library) => toRelPath(path, library.root, sep) !== null);
+}
+
+const iso = (ms: number) => new Date(Math.max(ms, 1)).toISOString();
 
 export function toSyncRows(
   batch: DirtyBatch,
   libraries: MappedLibrary[],
   sep: string,
   read: RecordReaders
-): { videos: VideoStateRow[]; notes: NoteRow[]; unmatched: DirtyBatch } {
+): { videos: VideoStateRow[]; notes: NoteRow[]; unmatched: DirtyBatch; invalid: DirtyBatch } {
   const videos: VideoStateRow[] = [];
   const notes: NoteRow[] = [];
   const unmatched: DirtyBatch = { videos: [], notes: [] };
+  const invalid: DirtyBatch = { videos: [], notes: [] };
 
   for (const path of batch.videos) {
     const places = placesOf(path, libraries, sep);
-    if (places.length === 0) unmatched.videos.push(path);
+    if (places.length === 0) {
+      (hasAnyPlace(path, libraries, sep) ? invalid : unmatched).videos.push(path);
+      continue;
+    }
     const { watched, position, duration, updatedAt } = read.video(path);
     for (const { libraryId, relPath } of places)
       videos.push({
@@ -65,13 +76,16 @@ export function toSyncRows(
 
   for (const path of batch.notes) {
     const places = placesOf(path, libraries, sep);
-    if (places.length === 0) unmatched.notes.push(path);
+    if (places.length === 0) {
+      (hasAnyPlace(path, libraries, sep) ? invalid : unmatched).notes.push(path);
+      continue;
+    }
     const { value, updatedAt } = read.note(path);
     for (const { libraryId, relPath } of places)
       notes.push({ library_id: libraryId, rel_path: relPath, text: value, updated_at: iso(updatedAt) });
   }
 
-  return { videos, notes, unmatched };
+  return { videos, notes, unmatched, invalid };
 }
 
 type SyncedRow = { library_id: string; rel_path: string; updated_at: string };
