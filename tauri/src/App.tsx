@@ -530,6 +530,7 @@ export default function App() {
             setWatchedState(new Set(Watched.watched));
             bumpRecents((v) => v + 1);
           }}
+          signedIn={account !== null}
         />
       ) : (
         <div className="flex min-h-0 flex-1">
