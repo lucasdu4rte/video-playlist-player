@@ -34,6 +34,9 @@ import { NotesPanel } from "@/components/NotesPanel";
 import { WatchedBanner } from "@/components/WatchedBanner";
 import { Player, type PlayerHandle } from "@/components/Player";
 import { ShortcutsDialog } from "@/components/ShortcutsDialog";
+import { SignInDialog } from "@/components/SignInDialog";
+import { currentAccount, onAccountChange, type Account } from "@/lib/auth";
+import { RemoteChanges, flushNow, startSync } from "@/lib/sync";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -67,6 +70,9 @@ export default function App() {
   const [showDetails, setShowDetailsState] = useState(getShowDetails());
   const [noted, setNoted] = useState<Set<string>>(new Set(Notes.paths()));
   const [, bumpRecents] = useState(0);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [remoteRevision, setRemoteRevision] = useState(0);
 
   const currentTimeRef = useRef(0);
   const lastSavedRef = useRef(0);
@@ -110,6 +116,7 @@ export default function App() {
       if (node.type !== "video") return;
       setExpanded((prev) => new Set([...prev, ...ancestorsOf(roots, node)]));
       persistProgress();
+      void flushNow();
       currentTimeRef.current = 0;
       lastSavedRef.current = 0;
       setAutoPlayIntent(autoPlay);
@@ -236,8 +243,12 @@ export default function App() {
     }
   };
   const onPlayingChange = (playing: boolean) => {
-    if (playing) void acquireWake();
-    else void releaseWake();
+    if (playing) {
+      void acquireWake();
+      return;
+    }
+    void releaseWake();
+    void flushNow();
   };
 
   const changeSpeed = (value: number) => {
@@ -448,6 +459,32 @@ export default function App() {
     };
   }, [persistProgress]);
 
+  useEffect(() => {
+    // Token refreshes hand back a new object for the same user; keep the old
+    // one so the sync effect below does not restart.
+    const adopt = (next: Account | null) =>
+      setAccount((prev) => (prev?.userId === next?.userId ? prev : next));
+    currentAccount()
+      .then(adopt)
+      .catch((e) => console.error("session restore failed", e));
+    return onAccountChange(adopt);
+  }, []);
+
+  useEffect(() => {
+    if (!account) return;
+    return startSync(account);
+  }, [account]);
+
+  useEffect(() => {
+    const refresh = () => {
+      setWatchedState(new Set(Watched.watched));
+      setNoted(new Set(Notes.paths()));
+      setRemoteRevision((n) => n + 1);
+    };
+    RemoteChanges.addEventListener("change", refresh);
+    return () => RemoteChanges.removeEventListener("change", refresh);
+  }, []);
+
   // ---- derived
   const searched = useMemo(() => searchTree(roots, query), [roots, query]);
   const visibleRoots = useMemo(
@@ -466,7 +503,13 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <AppHeader canGoBack={hasOpenedFolder} onHome={goHome} onShowShortcuts={() => setShowShortcuts(true)} />
+      <AppHeader
+        canGoBack={hasOpenedFolder}
+        onHome={goHome}
+        onShowShortcuts={() => setShowShortcuts(true)}
+        account={account}
+        onSignIn={() => setSigningIn(true)}
+      />
 
       {!hasOpenedFolder ? (
         <Home
@@ -582,6 +625,7 @@ export default function App() {
             {showingNotes && (
               <ResizablePanel id="notes" order={3} defaultSize={24} minSize={16} maxSize={40}>
                 <NotesPanel
+                  key={remoteRevision}
                   video={currentVideo}
                   onNotesChange={() => setNoted(new Set(Notes.paths()))}
                 />
@@ -596,6 +640,7 @@ export default function App() {
       )}
 
       <ShortcutsDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
+      <SignInDialog open={signingIn} onOpenChange={setSigningIn} />
     </div>
   );
 }
