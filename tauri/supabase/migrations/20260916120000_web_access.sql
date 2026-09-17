@@ -161,5 +161,45 @@ as $$
     where excluded.updated_at > n.updated_at;
 $$;
 
-revoke execute on function public.is_owner, public.is_allowed, public.sync_video_state, public.sync_notes from public, anon;
-grant execute on function public.is_owner, public.is_allowed, public.sync_video_state, public.sync_notes to authenticated;
+-- Keyset paging for pull: offset paging would skip or repeat rows while
+-- another device writes concurrently, since rows keep shifting under it.
+create function public.pull_video_state(since timestamptz, after_library uuid, after_path text, max_rows int)
+returns table (
+  library_id uuid, rel_path text, watched boolean,
+  "position" double precision, duration double precision,
+  updated_at timestamptz, synced_at timestamptz
+)
+language sql stable security invoker set search_path = ''
+as $$
+  select v.library_id, v.rel_path, v.watched, v.position, v.duration, v.updated_at, v.synced_at
+  from public.video_state v
+  where v.user_id = auth.uid()
+    and (v.synced_at, v.library_id, v.rel_path) > (
+      since,
+      coalesce(after_library, '00000000-0000-0000-0000-000000000000'::uuid),
+      coalesce(after_path, '')
+    )
+  order by v.synced_at, v.library_id, v.rel_path
+  limit max_rows;
+$$;
+
+create function public.pull_notes(since timestamptz, after_library uuid, after_path text, max_rows int)
+returns table (
+  library_id uuid, rel_path text, text text, updated_at timestamptz, synced_at timestamptz
+)
+language sql stable security invoker set search_path = ''
+as $$
+  select n.library_id, n.rel_path, n.text, n.updated_at, n.synced_at
+  from public.notes n
+  where n.user_id = auth.uid()
+    and (n.synced_at, n.library_id, n.rel_path) > (
+      since,
+      coalesce(after_library, '00000000-0000-0000-0000-000000000000'::uuid),
+      coalesce(after_path, '')
+    )
+  order by n.synced_at, n.library_id, n.rel_path
+  limit max_rows;
+$$;
+
+revoke execute on function public.is_owner, public.is_allowed, public.sync_video_state, public.sync_notes, public.pull_video_state, public.pull_notes from public, anon;
+grant execute on function public.is_owner, public.is_allowed, public.sync_video_state, public.sync_notes, public.pull_video_state, public.pull_notes to authenticated;

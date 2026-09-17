@@ -66,6 +66,54 @@ do $$ begin
   ) then raise exception 'sync_notes did not keep the newer row of a duplicate batch'; end if;
 end $$;
 
+-- pull_video_state pages by keyset, not offset. Within one transaction now()
+-- is constant, so every earlier row here shares one synced_at; the true
+-- keyset boundary is the (synced_at, library_id, rel_path) of the last row
+-- already written, not just its synced_at — a tuple comparison still ranks
+-- same-timestamp rows by library_id/rel_path, so a bare timestamp floor
+-- would re-include them.
+select v.synced_at as before_keyset, v.library_id as before_library, v.rel_path as before_path
+  from public.video_state v
+  where v.user_id = '00000000-0000-0000-0000-00000000000a'::uuid
+  order by v.synced_at desc, v.library_id desc, v.rel_path desc
+  limit 1;
+\gset
+
+insert into public.video_state (library_id, rel_path, watched, updated_at, synced_at) values
+  ('10000000-0000-0000-0000-000000000001', 'keyset/a.mp4', false, now(), :'before_keyset'::timestamptz + interval '1 second'),
+  ('10000000-0000-0000-0000-000000000001', 'keyset/b.mp4', false, now(), :'before_keyset'::timestamptz + interval '2 second'),
+  ('10000000-0000-0000-0000-000000000001', 'keyset/c.mp4', false, now(), :'before_keyset'::timestamptz + interval '3 second');
+
+select 'pull_video_state page 1' as check, rel_path
+  from public.pull_video_state(:'before_keyset'::timestamptz, :'before_library'::uuid, :'before_path'::text, 2);
+-- A plain top-level query (not a dollar-quoted DO block) is required here so
+-- psql still substitutes the :'variable' placeholders captured above. The
+-- divisor is a subquery rather than a bare literal so Postgres can't fold
+-- "1/0" away at plan time regardless of which branch actually applies.
+select 1 / (
+  select count(*) from (select 1 where (
+    select array_agg(rel_path order by rel_path)
+    from public.pull_video_state(:'before_keyset'::timestamptz, :'before_library'::uuid, :'before_path'::text, 2)
+  ) = array['keyset/a.mp4', 'keyset/b.mp4']) t
+) as assert_pull_video_state_page_1;
+
+-- A real continuation call advances `since` to the last-seen row's own
+-- synced_at (as sync.ts's pullSince does) — reusing the original floor here
+-- would make every later-synced_at row match on the first tuple component
+-- alone, before the (library_id, rel_path) keyset is even considered.
+select synced_at as page1_last_synced from public.video_state
+  where library_id = '10000000-0000-0000-0000-000000000001' and rel_path = 'keyset/b.mp4';
+\gset
+
+select 'pull_video_state page 2' as check, rel_path
+  from public.pull_video_state(:'page1_last_synced'::timestamptz, '10000000-0000-0000-0000-000000000001'::uuid, 'keyset/b.mp4', 2);
+select 1 / (
+  select count(*) from (select 1 where (
+    select array_agg(rel_path)
+    from public.pull_video_state(:'page1_last_synced'::timestamptz, '10000000-0000-0000-0000-000000000001'::uuid, 'keyset/b.mp4', 2)
+  ) = array['keyset/c.mp4']) t
+) as assert_pull_video_state_page_2;
+
 -- rel_path CHECK: traversal, absolute paths, empty strings and backslashes are all rejected.
 do $$ begin
   insert into public.notes (library_id, rel_path, text, updated_at)
@@ -108,6 +156,17 @@ select public.sync_notes('[
   {"library_id":"10000000-0000-0000-0000-000000000001","rel_path":"01 Intro.mp4","text":"guest note","updated_at":"2026-09-16T12:30:00.000Z"}
 ]');
 select 'guest own note' as check, text from public.notes;
+
+select 'guest pull_notes' as check, rel_path, text
+  from public.pull_notes('1970-01-01T00:00:00Z'::timestamptz, null, null, 100);
+do $$ begin
+  if (
+    select array_agg(text order by text)
+    from public.pull_notes('1970-01-01T00:00:00Z'::timestamptz, null, null, 100)
+  ) is distinct from array['guest note'] then
+    raise exception 'guest pull_notes did not return exactly their own note';
+  end if;
+end $$;
 
 do $$ begin
   update public.libraries set on_web = false;
