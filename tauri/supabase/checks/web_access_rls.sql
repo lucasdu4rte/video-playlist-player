@@ -1,12 +1,13 @@
 \set ON_ERROR_STOP on
 begin;
 
-insert into auth.users (id, email) values
-  ('00000000-0000-0000-0000-00000000000a', 'owner@example.com'),
-  ('00000000-0000-0000-0000-00000000000b', 'guest@example.com'),
-  ('00000000-0000-0000-0000-00000000000c', 'stranger@example.com');
+insert into auth.users (id, email, email_confirmed_at) values
+  ('00000000-0000-0000-0000-00000000000a', 'owner@example.com', now()),
+  ('00000000-0000-0000-0000-00000000000b', 'guest@example.com', now()),
+  ('00000000-0000-0000-0000-00000000000c', 'stranger@example.com', now()),
+  ('00000000-0000-0000-0000-00000000000d', 'unconfirmed@example.com', null);
 insert into public.app_owner (user_id) values ('00000000-0000-0000-0000-00000000000a');
-insert into public.allowed_emails (email) values ('guest@example.com');
+insert into public.allowed_emails (email) values ('guest@example.com'), ('unconfirmed@example.com');
 
 -- Owner: no allowed_emails entry, still allowed.
 set local role authenticated;
@@ -39,6 +40,60 @@ select public.sync_video_state('[
 select 'lww newer wins' as check, watched, position, updated_at from public.video_state;
 
 select 'owner sees libraries' as check, count(*) from public.libraries;
+
+-- A batch with two rows for the same key must not abort the whole call; the newer row wins.
+select public.sync_video_state('[
+  {"library_id":"10000000-0000-0000-0000-000000000001","rel_path":"02 Dedupe.mp4","watched":false,"position":1,"duration":600,"updated_at":"2026-09-16T10:00:00.000Z"},
+  {"library_id":"10000000-0000-0000-0000-000000000001","rel_path":"02 Dedupe.mp4","watched":true,"position":99,"duration":600,"updated_at":"2026-09-16T14:00:00.000Z"}
+]');
+select 'dedupe video_state' as check, watched, position, updated_at
+  from public.video_state where rel_path = '02 Dedupe.mp4';
+do $$ begin
+  if not exists (
+    select 1 from public.video_state
+    where rel_path = '02 Dedupe.mp4' and watched = true and position = 99
+  ) then raise exception 'sync_video_state did not keep the newer row of a duplicate batch'; end if;
+end $$;
+
+select public.sync_notes('[
+  {"library_id":"10000000-0000-0000-0000-000000000001","rel_path":"02 Dedupe.mp4","text":"old","updated_at":"2026-09-16T10:00:00.000Z"},
+  {"library_id":"10000000-0000-0000-0000-000000000001","rel_path":"02 Dedupe.mp4","text":"new","updated_at":"2026-09-16T14:00:00.000Z"}
+]');
+select 'dedupe notes' as check, text, updated_at from public.notes where rel_path = '02 Dedupe.mp4';
+do $$ begin
+  if not exists (
+    select 1 from public.notes where rel_path = '02 Dedupe.mp4' and text = 'new'
+  ) then raise exception 'sync_notes did not keep the newer row of a duplicate batch'; end if;
+end $$;
+
+-- rel_path CHECK: traversal, absolute paths, empty strings and backslashes are all rejected.
+do $$ begin
+  insert into public.notes (library_id, rel_path, text, updated_at)
+    values ('10000000-0000-0000-0000-000000000001', 'a/../b.mp4', 'x', now());
+  raise exception 'rel_path traversal was accepted';
+exception when check_violation then null;
+end $$;
+
+do $$ begin
+  insert into public.notes (library_id, rel_path, text, updated_at)
+    values ('10000000-0000-0000-0000-000000000001', '/abs.mp4', 'x', now());
+  raise exception 'rel_path absolute path was accepted';
+exception when check_violation then null;
+end $$;
+
+do $$ begin
+  insert into public.notes (library_id, rel_path, text, updated_at)
+    values ('10000000-0000-0000-0000-000000000001', '', 'x', now());
+  raise exception 'rel_path empty string was accepted';
+exception when check_violation then null;
+end $$;
+
+do $$ begin
+  insert into public.notes (library_id, rel_path, text, updated_at)
+    values ('10000000-0000-0000-0000-000000000001', E'..\\..\\secret.mp4', 'x', now());
+  raise exception 'rel_path backslash path was accepted';
+exception when check_violation then null;
+end $$;
 
 -- Guest: allowlisted, sees only on_web libraries and their trees, never the owner's rows.
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000b","email":"guest@example.com","role":"authenticated"}';
@@ -73,6 +128,50 @@ do $$ begin
 exception when insufficient_privilege then null;
 end $$;
 
+do $$ begin
+  insert into public.app_owner (user_id) values ('00000000-0000-0000-0000-00000000000b');
+  raise exception 'guest inserted into app_owner';
+exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  insert into public.allowed_emails (email) values ('self-promoted@example.com');
+  raise exception 'guest inserted into allowed_emails';
+exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  update public.app_owner set user_id = '00000000-0000-0000-0000-00000000000b';
+  if found then raise exception 'guest updated app_owner'; end if;
+end $$;
+
+do $$ begin
+  insert into public.video_state (library_id, rel_path, watched, updated_at)
+    values ('10000000-0000-0000-0000-000000000002', 'a.mp4', true, now());
+  raise exception 'guest directly inserted video_state for a hidden library';
+exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  insert into public.notes (user_id, library_id, rel_path, text, updated_at)
+    values ('00000000-0000-0000-0000-00000000000a', '10000000-0000-0000-0000-000000000001', 'x.mp4', 'hi', now());
+  raise exception 'guest directly inserted a note with the owner''s user_id';
+exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  update public.notes set user_id = '00000000-0000-0000-0000-00000000000a'
+    where user_id = '00000000-0000-0000-0000-00000000000b' and rel_path = '01 Intro.mp4';
+  if found then raise exception 'guest reassigned their own note to the owner'; end if;
+exception when insufficient_privilege then null;
+end $$;
+
+-- Unconfirmed: allowlisted by email, but the address was never confirmed, so treated as a stranger.
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000d","email":"unconfirmed@example.com","role":"authenticated"}';
+
+select 'unconfirmed libraries' as check, count(*) from public.libraries;
+select 'unconfirmed hosts' as check, count(*) from public.hosts;
+
 -- Stranger: signed in, not allowlisted, sees nothing and writes nothing.
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-00000000000c","email":"stranger@example.com","role":"authenticated"}';
 
@@ -91,6 +190,23 @@ do $$ begin
   ]');
   raise exception 'stranger wrote video state';
 exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  insert into public.app_owner (user_id) values ('00000000-0000-0000-0000-00000000000c');
+  raise exception 'stranger inserted into app_owner';
+exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  insert into public.allowed_emails (email) values ('self-promoted-2@example.com');
+  raise exception 'stranger inserted into allowed_emails';
+exception when insufficient_privilege then null;
+end $$;
+
+do $$ begin
+  update public.app_owner set user_id = '00000000-0000-0000-0000-00000000000c';
+  if found then raise exception 'stranger updated app_owner'; end if;
 end $$;
 
 do $$ begin

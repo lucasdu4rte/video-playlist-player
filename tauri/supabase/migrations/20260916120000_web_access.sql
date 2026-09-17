@@ -31,7 +31,12 @@ create table public.hosts (
 create table public.video_state (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   library_id uuid not null references public.libraries on delete cascade,
-  rel_path text not null check (rel_path <> '' and rel_path !~ '^/' and rel_path !~ '(^|/)\.\.(/|$)'),
+  rel_path text not null check (
+    rel_path <> ''
+    and rel_path !~ '^/'
+    and rel_path !~ '(^|/)\.\.(/|$)'
+    and position(E'\\' in rel_path) = 0
+  ),
   watched boolean not null default false,
   position double precision,
   duration double precision,
@@ -43,7 +48,12 @@ create table public.video_state (
 create table public.notes (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   library_id uuid not null references public.libraries on delete cascade,
-  rel_path text not null check (rel_path <> '' and rel_path !~ '^/' and rel_path !~ '(^|/)\.\.(/|$)'),
+  rel_path text not null check (
+    rel_path <> ''
+    and rel_path !~ '^/'
+    and rel_path !~ '(^|/)\.\.(/|$)'
+    and position(E'\\' in rel_path) = 0
+  ),
   text text not null,
   updated_at timestamptz not null,
   synced_at timestamptz not null default now(),
@@ -64,7 +74,11 @@ create function public.is_allowed() returns boolean
 language sql stable security definer set search_path = ''
 as $$
   select public.is_owner()
-    or exists (select 1 from public.allowed_emails where email = lower(auth.jwt() ->> 'email'));
+    or exists (
+      select 1 from auth.users u
+      join public.allowed_emails a on a.email = lower(u.email)
+      where u.id = auth.uid() and u.email_confirmed_at is not null
+    );
 $$;
 
 alter table public.app_owner enable row level security;
@@ -116,11 +130,13 @@ create function public.sync_video_state(rows jsonb) returns void
 language sql security invoker set search_path = ''
 as $$
   insert into public.video_state as v (user_id, library_id, rel_path, watched, position, duration, updated_at)
-  select auth.uid(), r.library_id, r.rel_path, r.watched, r.position, r.duration, r.updated_at
+  select distinct on (r.library_id, r.rel_path)
+    auth.uid(), r.library_id, r.rel_path, r.watched, r.position, r.duration, r.updated_at
   from jsonb_to_recordset(rows) as r(
     library_id uuid, rel_path text, watched boolean,
     position double precision, duration double precision, updated_at timestamptz
   )
+  order by r.library_id, r.rel_path, r.updated_at desc
   on conflict (user_id, library_id, rel_path) do update
     set watched = excluded.watched,
         position = excluded.position,
@@ -134,8 +150,10 @@ create function public.sync_notes(rows jsonb) returns void
 language sql security invoker set search_path = ''
 as $$
   insert into public.notes as n (user_id, library_id, rel_path, text, updated_at)
-  select auth.uid(), r.library_id, r.rel_path, r.text, r.updated_at
+  select distinct on (r.library_id, r.rel_path)
+    auth.uid(), r.library_id, r.rel_path, r.text, r.updated_at
   from jsonb_to_recordset(rows) as r(library_id uuid, rel_path text, text text, updated_at timestamptz)
+  order by r.library_id, r.rel_path, r.updated_at desc
   on conflict (user_id, library_id, rel_path) do update
     set text = excluded.text,
         updated_at = excluded.updated_at,
