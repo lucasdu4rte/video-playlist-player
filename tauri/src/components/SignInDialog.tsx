@@ -77,6 +77,7 @@ export function SignInDialog({ open, onOpenChange }: Props) {
               required
               autoComplete="email"
               placeholder="you@example.com"
+              aria-label="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -94,6 +95,7 @@ export function SignInDialog({ open, onOpenChange }: Props) {
               inputMode="numeric"
               autoComplete="one-time-code"
               pattern="[0-9]+"
+              aria-label="Sign-in code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
