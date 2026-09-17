@@ -5,7 +5,7 @@ Technical guide for working in this project. Focused on patterns, setup, and com
 ## Stack
 
 - **Platform:** desktop app via Tauri v2 (macOS / Windows / Linux). Everything lives under `tauri/`
-- **Backend:** Rust, only for what the web layer can't do — `scan_folder` (recursive walk, natural sort, prunes empty folders, video-extension filter) and `path_exists`
+- **Backend:** Rust, only for what the web layer can't do — `scan_folder` (recursive walk, natural sort, prunes empty folders, video-extension filter), `path_exists`, and `oauth_wait_code` (a loopback listener on `127.0.0.1:8787`, bound only while a Google sign-in is in flight)
 - **Frontend:** React 19 + TypeScript + Vite, Tailwind CSS v4, shadcn/ui components
 - **Media:** Vidstack (`@vidstack/react`) with its default video layout, fed by `convertFileSrc`. The layout ships its own aligned chrome — resist re-skinning it by hand, which is what the previous Video.js setup cost us
 - **Persistence:** `localStorage` through the stores in `src/lib/store.ts`, the source of truth on each device. No Tauri store plugin
