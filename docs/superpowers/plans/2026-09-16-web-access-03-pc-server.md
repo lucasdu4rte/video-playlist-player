@@ -1135,6 +1135,8 @@ git commit -m "feat(tauri): serve library trees and signed media over HTTP"
 
 ### Task 5: Server lifecycle, commands and the shared OAuth callback
 
+> **Note (plan 2 final review):** on the `lucas/web-access-02-supabase-auth` branch, the command is `oauth_wait_code`, defined directly in `lib.rs` (not `server::oauth_wait_code`) — this task's "copy that item verbatim" step and the `server::oauth_wait_code` reference below should target that definition. Any rewrite of `await_oauth_code` in `server/oauth.rs` on this branch must keep the existing bounded 2 s graceful-shutdown wait (`tokio::time::timeout(Duration::from_secs(2), &mut server)`) followed by `server.abort()` when that wait elapses, and must keep the existing stuck-client phase of the `callback_listener_lifecycle` test (a connection that writes a partial request and never closes it, verifying the listener is aborted and the port freed rather than held open).
+
 **Files:**
 - Replace: `tauri/src-tauri/src/server/mod.rs` (created by plan 2)
 - Create or replace: `tauri/src-tauri/src/server/oauth.rs` (plan 2's one-shot listener, whether plan 2 kept it in `oauth.rs` or in `mod.rs`)

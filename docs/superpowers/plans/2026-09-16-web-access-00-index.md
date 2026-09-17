@@ -206,6 +206,11 @@ The plans refined the contract above in these places. Where a line here disagree
 - **Web modules (plan 5):** `host.ts` (`HOST_OFFLINE_AFTER_MS`, `HostStatus`, `MediaFailure`, `MediaUnavailableError`, `isHostOnline`, `hostStatus`, `signMediaUrl`), `webLibrary.ts` (`WebLibrary`, `listWebLibraries`, `loadWebTree`), `webAuth.ts` (`signInWithGoogleRedirect`, `sendEmailLink`, `isAllowed`); components `SignInScreen`, `WebGate`, `WebHome`. `upsertLibrary` is a no-op outside Tauri.
 - **Removing a folder from Recents (plan 1 → plan 2):** `Watched.removeAll` / `Notes.removeAll` stamp and mark every cleared key dirty, so the next push erases that folder's progress and notes on every device and on the web (approved during design). Plan 2 must change the remove-confirmation copy in `Home.tsx` to say the data is erased on all devices when the user is signed in. The library id itself survives removal.
 - **Temporary dev hook (plan 3 → 4):** `src/lib/devServer.ts` exposes `window.devServer` in dev builds; plan 4 deletes it.
+- **`store.ts` (plan 2, added during final review):** `Dirty.done()` clears the in-flight batch once a push succeeds, and `syncInFlight.v1` persists that batch across the push so a crash mid-push re-sends it on restart.
+- **Pull RPCs (plan 2, added during final review):** `pull_video_state` / `pull_notes(since, after_library, after_path, max_rows)` page by keyset on `(synced_at, library_id, rel_path)` rather than offset, so concurrent writes from another device can't skip or repeat rows.
+- **`sync.ts` (plan 2, amended during final review):** `registerOpenedLibrary` is `async`, returning `Promise<LinkRequest | null>` — its link-vs-new decision runs inside the sync queue, after the library list has loaded at least once this sign-in, instead of racing that first load synchronously.
+- **`is_allowed()` (plan 2, added during final review):** matches `auth.users.email_confirmed_at`, never the JWT email claim, so an unconfirmed guest sign-in is never treated as allowed.
+- **`Home.tsx` (plan 2, added during final review):** takes a `signedIn` prop; the folder-removal confirmation copy appends "on all your devices" when signed in, since removal erases progress and notes everywhere, not just locally.
 
 ## Known Risks Carried Into Execution
 
