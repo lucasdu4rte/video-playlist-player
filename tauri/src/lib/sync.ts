@@ -1,0 +1,246 @@
+import type { Account } from "@/lib/auth";
+import { newerKeys } from "@/lib/lww";
+import { SEP } from "@/lib/platform";
+import {
+  Dirty,
+  LocalChanges,
+  Notes,
+  Playback,
+  Recents,
+  SyncCursor,
+  Watched,
+  applyNoteRecord,
+  applyVideoRecord,
+  noteRecord,
+  videoRecord,
+} from "@/lib/store";
+import { getSupabase } from "@/lib/supabase";
+import {
+  toLocalNotes,
+  toLocalVideos,
+  toSyncRows,
+  type MappedLibrary,
+  type NoteRow,
+  type VideoStateRow,
+} from "@/lib/syncRows";
+
+export type RemoteLibrary = { id: string; name: string };
+export type LinkRequest = { path: string; name: string; candidates: RemoteLibrary[] };
+
+/** Fires "change" after a pull wrote remote records into the local stores. */
+export const RemoteChanges = new EventTarget();
+
+const PUSH_DELAY_MS = 30_000;
+const PAGE_SIZE = 1000; // matches max_rows in supabase/config.toml
+// synced_at is the server clock at transaction start, so a slow transaction can
+// commit a row older than the cursor we already advanced past. Re-reading a
+// minute is cheap: newerKeys drops anything already applied.
+const PULL_OVERLAP_MS = 60_000;
+const VIDEO_COLUMNS = "library_id, rel_path, watched, position, duration, updated_at, synced_at";
+const NOTE_COLUMNS = "library_id, rel_path, text, updated_at, synced_at";
+
+type Synced<Row> = Row & { synced_at: string };
+
+let account: Account | null = null;
+let remoteLibraries: RemoteLibrary[] = [];
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+let queue: Promise<void> = Promise.resolve();
+
+function serialized(task: () => Promise<void>): Promise<void> {
+  queue = queue.then(task).catch((error: unknown) => console.error("sync failed", error));
+  return queue;
+}
+
+function mappedLibraries(): MappedLibrary[] {
+  return remoteLibraries.flatMap(({ id }) => {
+    const root = Recents.pathFor(id);
+    return root === null ? [] : [{ id, root }];
+  });
+}
+
+function unmappedLibraries(): RemoteLibrary[] {
+  return remoteLibraries.filter(({ id }) => Recents.pathFor(id) === null);
+}
+
+// Values saved before signing in carry no dirty mark; queue them so the first
+// push uploads the library's history.
+function markLibraryDirty(root: string) {
+  const prefix = root + SEP;
+  const under = (paths: Iterable<string>) => [...paths].filter((path) => path.startsWith(prefix));
+  const videoPaths = new Set([
+    ...Watched.watched,
+    ...Object.keys(Watched.progress),
+    ...Object.keys(Playback.durations),
+  ]);
+  Dirty.restore({ videos: under(videoPaths), notes: under(Notes.paths()) });
+}
+
+async function callSync(fn: "sync_video_state" | "sync_notes", rows: VideoStateRow[] | NoteRow[]) {
+  const supabase = await getSupabase();
+  const { error } = await supabase.rpc(fn, { rows });
+  if (error) throw error;
+}
+
+async function push(): Promise<void> {
+  if (!account || Dirty.isEmpty()) return;
+  const batch = Dirty.take();
+  const rows = toSyncRows(batch, mappedLibraries(), SEP, { video: videoRecord, note: noteRecord });
+  try {
+    if (rows.videos.length > 0) await callSync("sync_video_state", rows.videos);
+    if (rows.notes.length > 0) await callSync("sync_notes", rows.notes);
+    Dirty.restore(rows.unmatched);
+  } catch (error) {
+    Dirty.restore(batch);
+    throw error;
+  }
+}
+
+function schedulePush() {
+  if (pushTimer !== null) return;
+  // Counted from the first change rather than reset by each one: progress is
+  // saved every 5 s while playing, which would postpone a sliding debounce forever.
+  pushTimer = setTimeout(() => void flushNow(), PUSH_DELAY_MS);
+}
+
+export function flushNow(): Promise<void> {
+  if (pushTimer !== null) clearTimeout(pushTimer);
+  pushTimer = null;
+  if (!account) return Promise.resolve();
+  return serialized(push);
+}
+
+async function refreshLibraries(userId: string) {
+  const supabase = await getSupabase();
+  const { data, error } = await supabase.from("libraries").select("id, name").eq("owner_id", userId);
+  if (error) throw error;
+  remoteLibraries = data as RemoteLibrary[];
+}
+
+async function fetchSince<Row>(table: "video_state" | "notes", columns: string, since: string) {
+  const supabase = await getSupabase();
+  const rows: Synced<Row>[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .gt("synced_at", since)
+      .order("synced_at")
+      .order("library_id")
+      .order("rel_path")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data as unknown as Synced<Row>[];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
+
+function localStamps(paths: string[], stampOf: (path: string) => number): Record<string, number> {
+  return Object.fromEntries(paths.map((path) => [path, stampOf(path)]));
+}
+
+async function pull(full = false): Promise<void> {
+  if (!account) return;
+  await refreshLibraries(account.userId);
+  const cursor = Date.parse(SyncCursor.get() ?? "") || 0;
+  const since = new Date(full ? 0 : Math.max(0, cursor - PULL_OVERLAP_MS)).toISOString();
+  const [videoRows, noteRows] = await Promise.all([
+    fetchSince<VideoStateRow>("video_state", VIDEO_COLUMNS, since),
+    fetchSince<NoteRow>("notes", NOTE_COLUMNS, since),
+  ]);
+
+  const libraries = mappedLibraries();
+  const videos = toLocalVideos(videoRows, libraries, SEP);
+  const notes = toLocalNotes(noteRows, libraries, SEP);
+  const videoKeys = Object.keys(videos);
+  const noteKeys = Object.keys(notes);
+  const newVideos = newerKeys(localStamps(videoKeys, (p) => videoRecord(p).updatedAt), videos);
+  const newNotes = newerKeys(localStamps(noteKeys, (p) => noteRecord(p).updatedAt), notes);
+  for (const path of newVideos) applyVideoRecord(path, videos[path].value);
+  for (const path of newNotes) applyNoteRecord(path, notes[path]);
+
+  const latest = [...videoRows, ...noteRows].reduce(
+    (max, row) => Math.max(max, Date.parse(row.synced_at)),
+    cursor
+  );
+  if (latest > cursor) SyncCursor.set(new Date(latest).toISOString());
+  if (newVideos.length + newNotes.length > 0) RemoteChanges.dispatchEvent(new Event("change"));
+}
+
+// With unlinked remote libraries around, a local folder may be one of them, so
+// it waits for the linking dialog instead of being registered as new.
+async function registerRecents() {
+  if (unmappedLibraries().length > 0) return;
+  const known = new Set(remoteLibraries.map(({ id }) => id));
+  for (const folder of Recents.folders) {
+    const id = Recents.libraryIdFor(folder.path);
+    if (!known.has(id)) await upsertLibrary(id, folder.name);
+  }
+}
+
+export async function upsertLibrary(libraryId: string, name: string): Promise<void> {
+  if (!account) return;
+  const now = new Date().toISOString();
+  const supabase = await getSupabase();
+  const { error } = await supabase.from("libraries").upsert({
+    id: libraryId,
+    owner_id: account.userId,
+    name,
+    last_opened_at: now,
+    updated_at: now,
+  });
+  if (error) throw error;
+  if (remoteLibraries.some(({ id }) => id === libraryId)) return;
+  remoteLibraries = [...remoteLibraries, { id: libraryId, name }];
+  const root = Recents.pathFor(libraryId);
+  if (root !== null) markLibraryDirty(root);
+  schedulePush();
+}
+
+/** Registers a folder opened while signed in, or returns the choice the user has to make first. */
+export function registerOpenedLibrary(path: string, name: string): LinkRequest | null {
+  if (!account) return null;
+  const id = Recents.libraryIdFor(path);
+  const known = remoteLibraries.some((library) => library.id === id);
+  const candidates = known ? [] : unmappedLibraries();
+  if (candidates.length > 0) return { path, name, candidates };
+  upsertLibrary(id, name).catch((error: unknown) => console.error("library sync failed", error));
+  return null;
+}
+
+export async function linkLibrary(path: string, libraryId: string, name: string): Promise<void> {
+  Recents.link(path, libraryId);
+  await upsertLibrary(libraryId, name);
+  markLibraryDirty(path);
+  // Rows for this library were skipped by earlier pulls while it had no local path.
+  await serialized(() => pull(true));
+  await flushNow();
+}
+
+export function startSync(signedIn: Account): () => void {
+  account = signedIn;
+  const onDirty = () => schedulePush();
+  const onFocus = () => void serialized(pull);
+  const onFlush = () => void flushNow();
+
+  LocalChanges.addEventListener("dirty", onDirty);
+  window.addEventListener("focus", onFocus);
+  window.addEventListener("online", onFlush);
+  window.addEventListener("beforeunload", onFlush);
+  void serialized(async () => {
+    await pull();
+    await registerRecents();
+  });
+  if (!Dirty.isEmpty()) schedulePush();
+
+  return () => {
+    LocalChanges.removeEventListener("dirty", onDirty);
+    window.removeEventListener("focus", onFocus);
+    window.removeEventListener("online", onFlush);
+    window.removeEventListener("beforeunload", onFlush);
+    if (pushTimer !== null) clearTimeout(pushTimer);
+    pushTimer = null;
+    account = null;
+    remoteLibraries = [];
+  };
+}
