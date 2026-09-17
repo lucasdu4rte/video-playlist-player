@@ -36,8 +36,6 @@ const PAGE_SIZE = 1000; // matches max_rows in supabase/config.toml
 // commit a row older than the cursor we already advanced past. Re-reading a
 // minute is cheap: newerKeys drops anything already applied.
 const PULL_OVERLAP_MS = 60_000;
-const VIDEO_COLUMNS = "library_id, rel_path, watched, position, duration, updated_at, synced_at";
-const NOTE_COLUMNS = "library_id, rel_path, text, updated_at, synced_at";
 
 type Synced<Row> = Row & { synced_at: string };
 
@@ -46,9 +44,12 @@ let remoteLibraries: RemoteLibrary[] = [];
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let queue: Promise<void> = Promise.resolve();
 
+// The returned promise settles with the task's own outcome, but `queue` itself
+// only ever resolves — a failed task must not poison every task queued after it.
 function serialized(task: () => Promise<void>): Promise<void> {
-  queue = queue.then(task).catch((error: unknown) => console.error("sync failed", error));
-  return queue;
+  const result = queue.then(task);
+  queue = result.catch((error: unknown) => console.error("sync failed", error));
+  return result;
 }
 
 function mappedLibraries(): MappedLibrary[] {
@@ -85,12 +86,16 @@ async function push(): Promise<void> {
   if (!account || Dirty.isEmpty()) return;
   const batch = Dirty.take();
   const rows = toSyncRows(batch, mappedLibraries(), SEP, { video: videoRecord, note: noteRecord });
+  if (rows.invalid.videos.length + rows.invalid.notes.length > 0)
+    console.error("dropping unsyncable paths", rows.invalid);
   try {
     if (rows.videos.length > 0) await callSync("sync_video_state", rows.videos);
     if (rows.notes.length > 0) await callSync("sync_notes", rows.notes);
+    Dirty.done();
     Dirty.restore(rows.unmatched);
   } catch (error) {
     Dirty.restore(batch);
+    schedulePush();
     throw error;
   }
 }
@@ -102,11 +107,17 @@ function schedulePush() {
   pushTimer = setTimeout(() => void flushNow(), PUSH_DELAY_MS);
 }
 
-export function flushNow(): Promise<void> {
+// Rejects on failure, for callers (linkLibrary) that need to know the push failed.
+function flush(): Promise<void> {
   if (pushTimer !== null) clearTimeout(pushTimer);
   pushTimer = null;
   if (!account) return Promise.resolve();
   return serialized(push);
+}
+
+/** Same as `flush`, but swallows and logs — safe for fire-and-forget callers. */
+export function flushNow(): Promise<void> {
+  return flush().catch((error: unknown) => console.error("flush failed", error));
 }
 
 async function refreshLibraries(userId: string) {
@@ -116,22 +127,33 @@ async function refreshLibraries(userId: string) {
   remoteLibraries = data as RemoteLibrary[];
 }
 
-async function fetchSince<Row>(table: "video_state" | "notes", columns: string, since: string) {
+type PulledRow = { library_id: string; rel_path: string };
+
+// Offset paging would skip or repeat rows while another device writes
+// concurrently; a keyset on (synced_at, library_id, rel_path) does not.
+async function pullSince<Row extends PulledRow>(
+  fn: "pull_video_state" | "pull_notes",
+  since: string
+): Promise<Synced<Row>[]> {
   const supabase = await getSupabase();
   const rows: Synced<Row>[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from(table)
-      .select(columns)
-      .gt("synced_at", since)
-      .order("synced_at")
-      .order("library_id")
-      .order("rel_path")
-      .range(from, from + PAGE_SIZE - 1);
+  let afterLibrary: string | null = null;
+  let afterPath: string | null = null;
+  for (;;) {
+    const { data, error } = await supabase.rpc(fn, {
+      since,
+      after_library: afterLibrary,
+      after_path: afterPath,
+      max_rows: PAGE_SIZE,
+    });
     if (error) throw error;
     const page = data as unknown as Synced<Row>[];
     rows.push(...page);
     if (page.length < PAGE_SIZE) return rows;
+    const last = page[page.length - 1];
+    since = last.synced_at;
+    afterLibrary = last.library_id;
+    afterPath = last.rel_path;
   }
 }
 
@@ -142,14 +164,16 @@ function localStamps(paths: string[], stampOf: (path: string) => number): Record
 async function pull(full = false): Promise<void> {
   if (!account) return;
   await refreshLibraries(account.userId);
+  const libraries = mappedLibraries();
   const cursor = Date.parse(SyncCursor.get() ?? "") || 0;
   const since = new Date(full ? 0 : Math.max(0, cursor - PULL_OVERLAP_MS)).toISOString();
   const [videoRows, noteRows] = await Promise.all([
-    fetchSince<VideoStateRow>("video_state", VIDEO_COLUMNS, since),
-    fetchSince<NoteRow>("notes", NOTE_COLUMNS, since),
+    pullSince<VideoStateRow>("pull_video_state", since),
+    pullSince<NoteRow>("pull_notes", since),
   ]);
+  // Signed out while the fetches were in flight: don't apply stale data or move the cursor.
+  if (!account) return;
 
-  const libraries = mappedLibraries();
   const videos = toLocalVideos(videoRows, libraries, SEP);
   const notes = toLocalNotes(noteRows, libraries, SEP);
   const videoKeys = Object.keys(videos);
@@ -174,11 +198,14 @@ async function registerRecents() {
   const known = new Set(remoteLibraries.map(({ id }) => id));
   for (const folder of Recents.folders) {
     const id = Recents.libraryIdFor(folder.path);
-    if (!known.has(id)) await upsertLibrary(id, folder.name);
+    // registerRecents already runs inside a queued task, so it calls the
+    // unqueued helper directly — awaiting the queued upsertLibrary here would
+    // deadlock on the very task that's running it.
+    if (!known.has(id)) await registerLibrary(id, folder.name);
   }
 }
 
-export async function upsertLibrary(libraryId: string, name: string): Promise<void> {
+async function registerLibrary(libraryId: string, name: string): Promise<void> {
   if (!account) return;
   const now = new Date().toISOString();
   const supabase = await getSupabase();
@@ -190,12 +217,17 @@ export async function upsertLibrary(libraryId: string, name: string): Promise<vo
     updated_at: now,
   });
   if (error) throw error;
-  if (remoteLibraries.some(({ id }) => id === libraryId)) return;
-  remoteLibraries = [...remoteLibraries, { id: libraryId, name }];
+  if (!remoteLibraries.some(({ id }) => id === libraryId))
+    remoteLibraries = [...remoteLibraries, { id: libraryId, name }];
+  // Re-pushing unchanged values is harmless (SQL LWW ignores them), so this
+  // always marks the library dirty rather than only on its first registration.
   const root = Recents.pathFor(libraryId);
   if (root !== null) markLibraryDirty(root);
   schedulePush();
 }
+
+export const upsertLibrary = (libraryId: string, name: string): Promise<void> =>
+  serialized(() => registerLibrary(libraryId, name));
 
 /** Registers a folder opened while signed in, or returns the choice the user has to make first. */
 export function registerOpenedLibrary(path: string, name: string): LinkRequest | null {
@@ -214,13 +246,13 @@ export async function linkLibrary(path: string, libraryId: string, name: string)
   markLibraryDirty(path);
   // Rows for this library were skipped by earlier pulls while it had no local path.
   await serialized(() => pull(true));
-  await flushNow();
+  await flush();
 }
 
 export function startSync(signedIn: Account): () => void {
   account = signedIn;
   const onDirty = () => schedulePush();
-  const onFocus = () => void serialized(pull);
+  const onFocus = () => void serialized(pull).catch(() => {});
   const onFlush = () => void flushNow();
 
   LocalChanges.addEventListener("dirty", onDirty);
@@ -230,7 +262,7 @@ export function startSync(signedIn: Account): () => void {
   void serialized(async () => {
     await pull();
     await registerRecents();
-  });
+  }).catch(() => {});
   if (!Dirty.isEmpty()) schedulePush();
 
   return () => {
