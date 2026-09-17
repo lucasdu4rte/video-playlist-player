@@ -397,3 +397,23 @@ export function getSpeed(): number {
 export function setSpeed(value: number) {
   write(KEYS.speed, value);
 }
+
+export const AUTH_STORAGE_KEY = "supabaseAuth.v1";
+
+export function hasStoredSession(): boolean {
+  return localStorage.getItem(AUTH_STORAGE_KEY) !== null;
+}
+
+const SYNC_CURSOR_KEY = "syncCursor.v1";
+
+export const SyncCursor = {
+  get(): string | null {
+    return read<string | null>(SYNC_CURSOR_KEY, null);
+  },
+  set(iso: string) {
+    write(SYNC_CURSOR_KEY, iso);
+  },
+  clear() {
+    localStorage.removeItem(SYNC_CURSOR_KEY);
+  },
+};
