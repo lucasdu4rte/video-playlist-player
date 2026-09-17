@@ -5,6 +5,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { AccountMenu } from "@/components/AccountMenu";
+import type { Account } from "@/lib/auth";
 
 const IS_MAC = navigator.platform.toLowerCase().includes("mac");
 
@@ -12,12 +14,20 @@ type Props = {
   canGoBack: boolean;
   onHome: () => void;
   onShowShortcuts: () => void;
+  account: Account | null;
+  onSignIn: () => void;
 };
 
 // The macOS window uses an overlay title bar, so the real traffic lights float
 // over this strip — hence the left inset. Elsewhere the OS draws its own bar
 // above us and no inset is needed.
-export function AppHeader({ canGoBack, onHome, onShowShortcuts }: Props) {
+export function AppHeader({
+  canGoBack,
+  onHome,
+  onShowShortcuts,
+  account,
+  onSignIn,
+}: Props) {
   return (
     <header
       data-tauri-drag-region
@@ -53,6 +63,7 @@ export function AppHeader({ canGoBack, onHome, onShowShortcuts }: Props) {
       </button>
 
       <div className="ml-auto flex items-center gap-1">
+        <AccountMenu account={account} onSignIn={onSignIn} />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

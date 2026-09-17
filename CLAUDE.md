@@ -5,10 +5,11 @@ Technical guide for working in this project. Focused on patterns, setup, and com
 ## Stack
 
 - **Platform:** desktop app via Tauri v2 (macOS / Windows / Linux). Everything lives under `tauri/`
-- **Backend:** Rust, only for what the web layer can't do — `scan_folder` (recursive walk, natural sort, prunes empty folders, video-extension filter) and `path_exists`
+- **Backend:** Rust, only for what the web layer can't do — `scan_folder` (recursive walk, natural sort, prunes empty folders, video-extension filter), `path_exists`, and `oauth_wait_code` (a loopback listener on `127.0.0.1:8787`, bound only while a Google sign-in is in flight)
 - **Frontend:** React 19 + TypeScript + Vite, Tailwind CSS v4, shadcn/ui components
 - **Media:** Vidstack (`@vidstack/react`) with its default video layout, fed by `convertFileSrc`. The layout ships its own aligned chrome — resist re-skinning it by hand, which is what the previous Video.js setup cost us
-- **Persistence:** `localStorage` through the stores in `src/lib/store.ts`. No DB, no Tauri store plugin
+- **Persistence:** `localStorage` through the stores in `src/lib/store.ts`, the source of truth on each device. No Tauri store plugin
+- **Sync (optional):** Supabase (Auth + Postgres + RLS) under `tauri/supabase/`. Signed out, or built without `VITE_SUPABASE_URL`, the app never loads `supabase-js` and makes no network request
 - **Package manager:** npm (there is a `package-lock.json`; don't switch)
 - **Node version:** pinned in `tauri/.node-version` (fnm picks it up on `cd`)
 
@@ -50,6 +51,16 @@ Technical guide for working in this project. Focused on patterns, setup, and com
 - Window, CSP and bundle settings are in `src-tauri/tauri.conf.json`. The asset protocol is enabled so local files can play — widening its scope or the CSP needs a real reason
 - Rust permissions live in `src-tauri/capabilities/`
 
+### Sync
+
+- Sync keys are `(library_id, rel_path)`; translation to and from absolute paths lives in `src/lib/syncRows.ts` and happens only in `src/lib/sync.ts`
+- Last-write-wins is enforced in SQL (`sync_video_state`, `sync_notes`), never in the client. Writes go through those RPCs, not table upserts
+- Pull uses the server-stamped `synced_at` as its cursor; `updated_at` (device clock) only orders writes
+- The owner is the single row in `public.app_owner`; guests are rows in `public.allowed_emails`. Both are edited from Studio (`http://127.0.0.1:54323`) or `psql`
+- `supabase-js` is imported only through `getSupabase()` in `src/lib/supabase.ts`
+- Guest access requires a confirmed email: `[auth.email] enable_confirmations = true` and `is_allowed()` matches `auth.users.email_confirmed_at`, never the JWT email claim
+- Pulls page by keyset through `pull_video_state` / `pull_notes`; in-flight push batches persist in `syncInFlight.v1` so a crash mid-push re-sends them
+
 ## Useful commands
 
 All commands run from `tauri/`.
@@ -60,6 +71,10 @@ npm run tauri dev    # native window with HMR
 npm run tauri build  # .app/.dmg (macOS) or .msi/.exe (Windows)
 npm run build        # Vite build only (no native bundle)
 npm run preview      # serve the built frontend in a browser (demo-tree mode)
+npx supabase start                    # local Supabase (API :54321, DB :54322, Studio :54323, Mailpit :54324)
+npx supabase migration up             # apply new migrations to the local DB
+npx vitest run                        # unit tests
+psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -f supabase/checks/web_access_rls.sql  # RLS + LWW checks
 ```
 
 Tauri does not cross-compile the webview: the Windows binary must be built on Windows, from the same source.

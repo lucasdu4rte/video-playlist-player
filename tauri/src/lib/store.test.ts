@@ -104,6 +104,41 @@ describe("video stamps and dirty tracking", () => {
     s.Dirty.restore(batch);
     expect(s.Dirty.take()).toEqual(batch);
   });
+
+  it("re-dirties a taken batch that never finished, after a reload", async () => {
+    const s = await freshStore();
+    s.Watched.setWatched("/lib/a.mp4", true);
+    s.Dirty.take();
+    const storage = localStorage;
+    vi.resetModules();
+    vi.stubGlobal("localStorage", storage);
+    const reloaded = await import("./store");
+    expect(reloaded.Dirty.take()).toEqual({ videos: ["/lib/a.mp4"], notes: [] });
+  });
+
+  it("does not re-dirty a taken batch once done() was called, after a reload", async () => {
+    const s = await freshStore();
+    s.Watched.setWatched("/lib/a.mp4", true);
+    s.Dirty.take();
+    s.Dirty.done();
+    const storage = localStorage;
+    vi.resetModules();
+    vi.stubGlobal("localStorage", storage);
+    const reloaded = await import("./store");
+    expect(reloaded.Dirty.isEmpty()).toBe(true);
+  });
+
+  it("does not duplicate a taken batch that was restored, after a reload", async () => {
+    const s = await freshStore();
+    s.Watched.setWatched("/lib/a.mp4", true);
+    const batch = s.Dirty.take();
+    s.Dirty.restore(batch);
+    const storage = localStorage;
+    vi.resetModules();
+    vi.stubGlobal("localStorage", storage);
+    const reloaded = await import("./store");
+    expect(reloaded.Dirty.take()).toEqual({ videos: ["/lib/a.mp4"], notes: [] });
+  });
 });
 
 describe("removeAll batching", () => {

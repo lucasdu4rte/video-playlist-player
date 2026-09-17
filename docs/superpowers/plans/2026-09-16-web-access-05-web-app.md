@@ -596,7 +596,9 @@ export async function revealInFinder(path: string): Promise<void> {
 
 - [ ] **Step 5: Keep the web from writing `libraries`**
 
-`libraries` rows belong to the owner's desktop. On the web, `App.openFolder` runs for every library a guest opens, and RLS would reject a guest's upsert. In `tauri/src/lib/sync.ts`, make this the first statement of `upsertLibrary`:
+> **Note (plan 2 final review):** on the `lucas/web-access-02-supabase-auth` branch, `upsertLibrary` is a thin `serialized(() => registerLibrary(...))` wrapper, and `registerRecents` (run from `startSync`) calls the inner `registerLibrary` directly, bypassing `upsertLibrary` entirely. Put the guard below in `registerLibrary` itself, not in `upsertLibrary`, or a guest's `registerRecents` pass still writes `libraries`. Also note `registerOpenedLibrary` is now `async`, returning `Promise<LinkRequest | null>` (it decides inside the sync queue after the library list has loaded) — callers already `await` or `.then()` it, so this guard doesn't need to change its signature further.
+
+`libraries` rows belong to the owner's desktop. On the web, `App.openFolder` runs for every library a guest opens, and RLS would reject a guest's upsert. In `tauri/src/lib/sync.ts`, make this the first statement of `registerLibrary`:
 
 ```ts
   if (mode !== "tauri") return;
@@ -1856,6 +1858,9 @@ The user chose manual deploys. Every command in this task changes remote state. 
   - Authentication → Sign In / Providers → **Email**: enabled, with a 6-digit OTP length.
   - Authentication → Email Templates → **Magic Link**: the same template as plan 2's local one, carrying both `{{ .ConfirmationURL }}` and `{{ .Token }}`.
   - Authentication → Emails → **SMTP**: set up custom SMTP before inviting guests. The built-in sender is heavily rate-limited.
+  - Authentication → Sign In / Providers → **Email**: **Confirm email** enabled — `is_allowed()` matches `auth.users.email_confirmed_at`, so an unconfirmed guest is never allowed in (plan 2 final review).
+  - Settings → API → **max_rows**: at least 1000, to match `PAGE_SIZE` in `tauri/src/lib/sync.ts` (plan 2 final review).
+  - Authentication → Sign In / Providers → **Google**: **Skip nonce checks** left off (plan 2 final review).
 
 - [ ] **Step 8: Point the desktop at production**
   In the desktop env used for release builds, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to the hosted values and `VITE_WEB_ORIGIN=https://<app>.vercel.app`. Rebuild with `npm run tauri build`, so the PC server's CORS accepts the production origin.

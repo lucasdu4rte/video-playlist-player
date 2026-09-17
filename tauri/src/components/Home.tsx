@@ -82,6 +82,7 @@ type Props = {
   onOpenPath: (path: string) => void;
   onResume: (rootPath: string, videoPath: string) => void;
   onChanged: () => void;
+  signedIn: boolean;
 };
 
 export function Home({
@@ -90,6 +91,7 @@ export function Home({
   onOpenPath,
   onResume,
   onChanged,
+  signedIn,
 }: Props) {
   const [dialog, setDialog] = useState<DialogState>(null);
 
@@ -232,7 +234,7 @@ export function Home({
               <DialogHeader>
                 <DialogTitle>Remove from recents?</DialogTitle>
                 <DialogDescription>
-                  {removalMessage(dialog.candidate)}
+                  {removalMessage(dialog.candidate, signedIn)}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -281,7 +283,7 @@ function SectionHeading({
   );
 }
 
-function removalMessage(c: RemoveCandidate) {
+function removalMessage(c: RemoveCandidate, signedIn: boolean) {
   const parts: string[] = [];
   if (c.watchedCount > 0)
     parts.push(
@@ -289,9 +291,10 @@ function removalMessage(c: RemoveCandidate) {
     );
   if (c.notesCount > 0)
     parts.push(`${c.notesCount} ${c.notesCount === 1 ? "note" : "notes"}`);
+  const where = signedIn ? " on all your devices" : "";
   return `Removing “${c.folder.name}” will also delete ${parts.join(
     " and "
-  )} saved for videos in this folder. This can’t be undone.`;
+  )} saved for videos in this folder${where}. This can’t be undone.`;
 }
 
 function RecentCard({

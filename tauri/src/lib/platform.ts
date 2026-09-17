@@ -1,6 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -105,4 +105,17 @@ export function onFolderDrop(handlers: DropHandlers): Promise<UnlistenFn> {
       handlers.onDrop?.(p.paths ?? []);
     }
   });
+}
+
+export function waitOAuthCode(): Promise<string> {
+  if (!isTauri) return Promise.reject(new Error("Google sign-in needs the desktop app."));
+  return invoke<string>("oauth_wait_code");
+}
+
+export async function openExternal(url: string): Promise<void> {
+  if (!isTauri) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  await openUrl(url);
 }
