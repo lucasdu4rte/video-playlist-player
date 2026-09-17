@@ -33,7 +33,7 @@ pub async fn await_oauth_code(timeout: Duration) -> Result<String, String> {
     let app = Router::new()
         .route("/auth/callback", get(callback))
         .with_state(pending);
-    let server = tokio::spawn(async move {
+    let mut server = tokio::spawn(async move {
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 let _ = stop_rx.await;
@@ -43,8 +43,16 @@ pub async fn await_oauth_code(timeout: Duration) -> Result<String, String> {
 
     let outcome = tokio::time::timeout(timeout, code_rx).await;
     let _ = stop_tx.send(());
-    // Bounded so a client that never closes its connection cannot keep the port held.
-    let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
+    // Bounded so a client that never closes its connection cannot keep the port
+    // held; abort outright if graceful shutdown doesn't finish in time, so the
+    // listener is guaranteed to be dropped before this function returns.
+    if tokio::time::timeout(Duration::from_secs(2), &mut server)
+        .await
+        .is_err()
+    {
+        server.abort();
+        let _ = server.await;
+    }
 
     match outcome {
         Ok(Ok(result)) => result,
@@ -105,6 +113,20 @@ mod tests {
             await_oauth_code(Duration::from_millis(50)).await,
             Err("Sign-in timed out. Try again.".to_string())
         );
+
+        // A connection stuck mid-request must not keep the port bound past
+        // the graceful-shutdown bound: it gets aborted instead.
+        let waiting = tokio::spawn(await_oauth_code(Duration::from_secs(5)));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut stuck = TcpStream::connect(CALLBACK_ADDR).await.unwrap();
+        stuck
+            .write_all(b"GET /auth/callback?code=stuck HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+            .await
+            .unwrap();
+        get_page("/auth/callback?code=released").await;
+        assert_eq!(waiting.await.unwrap(), Ok("released".to_string()));
+        TcpListener::bind(CALLBACK_ADDR).await.unwrap();
+        drop(stuck);
 
         let _busy = TcpListener::bind(CALLBACK_ADDR).await.unwrap();
         let error = await_oauth_code(Duration::from_secs(1)).await.unwrap_err();
