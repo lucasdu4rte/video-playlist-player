@@ -35,8 +35,15 @@ import { WatchedBanner } from "@/components/WatchedBanner";
 import { Player, type PlayerHandle } from "@/components/Player";
 import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { SignInDialog } from "@/components/SignInDialog";
+import { LinkLibraryDialog } from "@/components/LinkLibraryDialog";
 import { currentAccount, onAccountChange, type Account } from "@/lib/auth";
-import { RemoteChanges, flushNow, startSync } from "@/lib/sync";
+import {
+  RemoteChanges,
+  flushNow,
+  registerOpenedLibrary,
+  startSync,
+  type LinkRequest,
+} from "@/lib/sync";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -72,6 +79,7 @@ export default function App() {
   const [, bumpRecents] = useState(0);
   const [account, setAccount] = useState<Account | null>(null);
   const [signingIn, setSigningIn] = useState(false);
+  const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
   const [remoteRevision, setRemoteRevision] = useState(0);
 
   const currentTimeRef = useRef(0);
@@ -304,6 +312,7 @@ export default function App() {
       setRoots(tree);
       setIsLoading(false);
       Recents.record(path, name);
+      setLinkRequest(registerOpenedLibrary(path, name));
       bumpRecents((v) => v + 1);
 
       // Resuming from the home screen: select the video once the tree is in.
@@ -641,6 +650,7 @@ export default function App() {
 
       <ShortcutsDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
       <SignInDialog open={signingIn} onOpenChange={setSigningIn} />
+      <LinkLibraryDialog request={linkRequest} onClose={() => setLinkRequest(null)} />
     </div>
   );
 }
