@@ -1,5 +1,8 @@
+mod server;
+
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::Manager;
@@ -132,12 +135,19 @@ fn path_exists(path: String) -> bool {
     Path::new(&path).is_dir()
 }
 
+const OAUTH_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[tauri::command]
+async fn oauth_wait_code() -> Result<String, String> {
+    server::await_oauth_code(OAUTH_TIMEOUT).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![scan_folder, path_exists])
+        .invoke_handler(tauri::generate_handler![scan_folder, path_exists, oauth_wait_code])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
