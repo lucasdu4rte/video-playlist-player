@@ -226,8 +226,9 @@ async function registerLibrary(libraryId: string, name: string): Promise<void> {
   schedulePush();
 }
 
-export const upsertLibrary = (libraryId: string, name: string): Promise<void> =>
-  serialized(() => registerLibrary(libraryId, name));
+export function upsertLibrary(libraryId: string, name: string): Promise<void> {
+  return serialized(() => registerLibrary(libraryId, name));
+}
 
 /** Registers a folder opened while signed in, or returns the choice the user has to make first. */
 export function registerOpenedLibrary(path: string, name: string): LinkRequest | null {
