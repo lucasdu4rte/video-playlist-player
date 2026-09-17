@@ -102,6 +102,17 @@ describe("toSyncRows", () => {
     });
   });
 
+  it("strips NUL and replaces unpaired surrogates in note text", () => {
+    const rows = toSyncRows(
+      { videos: [], notes: ["/Users/me/Rust/a.mp4"] },
+      posixLibrary,
+      "/",
+      { video: read.video, note: () => ({ value: "a\u0000b\uD800c", updatedAt: NOON }) }
+    );
+
+    expect(rows.notes[0].text).toBe("ab\uFFFDc");
+  });
+
   it("stamps a legacy zero updatedAt as just after the epoch", () => {
     const rows = toSyncRows(
       { videos: ["/Users/me/Rust/a.mp4"], notes: [] },

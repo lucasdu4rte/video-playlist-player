@@ -45,6 +45,14 @@ function hasAnyPlace(path: string, libraries: MappedLibrary[], sep: string): boo
 
 const iso = (ms: number) => new Date(Math.max(ms, 1)).toISOString();
 
+// Postgres text columns reject a NUL byte outright and choke on an unpaired
+// UTF-16 surrogate, so either one left in a note stalls every push forever.
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function sanitizeText(text: string): string {
+  return text.replace(/\u0000/g, "").replace(UNPAIRED_SURROGATE, "\uFFFD");
+}
+
 export function toSyncRows(
   batch: DirtyBatch,
   libraries: MappedLibrary[],
@@ -81,8 +89,9 @@ export function toSyncRows(
       continue;
     }
     const { value, updatedAt } = read.note(path);
+    const text = sanitizeText(value);
     for (const { libraryId, relPath } of places)
-      notes.push({ library_id: libraryId, rel_path: relPath, text: value, updated_at: iso(updatedAt) });
+      notes.push({ library_id: libraryId, rel_path: relPath, text, updated_at: iso(updatedAt) });
   }
 
   return { videos, notes, unmatched, invalid };
