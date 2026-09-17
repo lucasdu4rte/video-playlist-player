@@ -121,9 +121,12 @@ export function flushNow(): Promise<void> {
   return flush().catch((error: unknown) => console.error("flush failed", error));
 }
 
-async function refreshLibraries(userId: string) {
+// RLS already scopes this to the owner's libraries plus whatever a guest is
+// allowed to see, so no owner_id filter is needed (and one would drop guests'
+// shared libraries).
+async function refreshLibraries() {
   const supabase = await getSupabase();
-  const { data, error } = await supabase.from("libraries").select("id, name").eq("owner_id", userId);
+  const { data, error } = await supabase.from("libraries").select("id, name");
   if (error) throw error;
   remoteLibraries = data as RemoteLibrary[];
   librariesLoaded = true;
@@ -165,7 +168,7 @@ function localStamps(paths: string[], stampOf: (path: string) => number): Record
 
 async function pull(full = false): Promise<void> {
   if (!account) return;
-  await refreshLibraries(account.userId);
+  await refreshLibraries();
   const libraries = mappedLibraries();
   const cursor = Date.parse(SyncCursor.get() ?? "") || 0;
   const since = new Date(full ? 0 : Math.max(0, cursor - PULL_OVERLAP_MS)).toISOString();
@@ -242,11 +245,10 @@ export function upsertLibrary(libraryId: string, name: string): Promise<void> {
  */
 export async function registerOpenedLibrary(path: string, name: string): Promise<LinkRequest | null> {
   if (!account) return null;
-  const userId = account.userId;
   let request: LinkRequest | null = null;
   try {
     await serialized(async () => {
-      if (!librariesLoaded) await refreshLibraries(userId);
+      if (!librariesLoaded) await refreshLibraries();
       const id = Recents.libraryIdFor(path);
       const known = remoteLibraries.some((library) => library.id === id);
       const candidates = known ? [] : unmappedLibraries();
@@ -269,7 +271,6 @@ export async function registerOpenedLibrary(path: string, name: string): Promise
 export async function linkLibrary(path: string, libraryId: string, name: string): Promise<void> {
   Recents.link(path, libraryId);
   await upsertLibrary(libraryId, name);
-  markLibraryDirty(path);
   // Rows for this library were skipped by earlier pulls while it had no local path.
   await serialized(() => pull(true));
   await flush();
