@@ -12,6 +12,7 @@ const KEYS = {
   videoStamps: "videoStamps.v1",
   noteStamps: "noteStamps.v1",
   dirty: "syncDirty.v1",
+  syncInFlight: "syncInFlight.v1",
   libraryIds: "libraryIds.v1",
 };
 
@@ -73,11 +74,21 @@ export type DirtyBatch = { videos: string[]; notes: string[] };
 class DirtyStore {
   private videos: Set<string>;
   private notes: Set<string>;
+  // The batch handed out by the last take() that hasn't been settled by
+  // restore()/done() yet, persisted so a crash mid-push re-sends it on the
+  // next launch instead of losing it.
+  private inFlight: DirtyBatch | null;
 
   constructor() {
     const saved = read<DirtyBatch>(KEYS.dirty, { videos: [], notes: [] });
     this.videos = new Set(saved.videos);
     this.notes = new Set(saved.notes);
+    this.inFlight = read<DirtyBatch | null>(KEYS.syncInFlight, null);
+    if (this.inFlight === null) return;
+    this.inFlight.videos.forEach((p) => this.videos.add(p));
+    this.inFlight.notes.forEach((p) => this.notes.add(p));
+    this.inFlight = null;
+    this.persist();
   }
   markVideo(path: string) {
     this.markVideos([path]);
@@ -101,12 +112,18 @@ class DirtyStore {
     const batch = { videos: [...this.videos], notes: [...this.notes] };
     this.videos.clear();
     this.notes.clear();
+    this.inFlight = batch;
     this.persist();
     return batch;
   }
   restore(batch: DirtyBatch) {
     batch.videos.forEach((p) => this.videos.add(p));
     batch.notes.forEach((p) => this.notes.add(p));
+    this.inFlight = null;
+    this.persist();
+  }
+  done() {
+    this.inFlight = null;
     this.persist();
   }
   isEmpty() {
@@ -118,6 +135,7 @@ class DirtyStore {
   }
   private persist() {
     write(KEYS.dirty, { videos: [...this.videos], notes: [...this.notes] });
+    write(KEYS.syncInFlight, this.inFlight);
   }
 }
 
