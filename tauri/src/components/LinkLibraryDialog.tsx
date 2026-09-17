@@ -13,7 +13,7 @@ import { linkLibrary, upsertLibrary, type LinkRequest } from "@/lib/sync";
 
 type Props = {
   request: LinkRequest | null;
-  onClose: () => void;
+  onClose: (request: LinkRequest) => void;
 };
 
 export function LinkLibraryDialog({ request, onClose }: Props) {
@@ -29,12 +29,15 @@ export function LinkLibraryDialog({ request, onClose }: Props) {
       console.error("library sync failed", error);
     } finally {
       setBusy(false);
-      onClose();
+      onClose(request);
     }
   };
 
   return (
-    <Dialog open={request !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={request !== null}
+      onOpenChange={(open) => !open && request && onClose(request)}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Already syncing this folder?</DialogTitle>

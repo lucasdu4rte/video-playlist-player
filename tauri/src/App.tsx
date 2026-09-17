@@ -651,7 +651,11 @@ export default function App() {
 
       <ShortcutsDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
       <SignInDialog open={signingIn} onOpenChange={setSigningIn} />
-      <LinkLibraryDialog request={linkRequest} onClose={() => setLinkRequest(null)} />
+      <LinkLibraryDialog
+        key={linkRequest?.path ?? "none"}
+        request={linkRequest}
+        onClose={(done) => setLinkRequest((current) => (current === done ? null : current))}
+      />
     </div>
   );
 }
