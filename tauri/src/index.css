@@ -5,6 +5,7 @@
 
 /* Light counterpart of the dark palette below (the design is dark-first). */
 :root {
+  color-scheme: light;
   --radius: 0.75rem;
   --background: #f7f8fa;
   --foreground: #16181c;
@@ -38,6 +39,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: #101113;
   --foreground: #f5f6f8;
   --card: #181a1e;

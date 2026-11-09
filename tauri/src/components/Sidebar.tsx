@@ -19,7 +19,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MiddleTruncate } from "@/components/MiddleTruncate";
 import { revealInFinder, type FileNode } from "@/lib/platform";
 import { countVideos, subtreeHasUnwatched } from "@/lib/tree";
@@ -119,13 +118,11 @@ export function Sidebar(props: Props) {
           </div>
         </div>
       ) : (
-        <ScrollArea className="-mx-1 min-h-0 flex-1">
-          <div className="px-1">
-            {props.roots.map((node) => (
-              <Row key={node.path} node={node} depth={0} {...props} />
-            ))}
-          </div>
-        </ScrollArea>
+        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+          {props.roots.map((node) => (
+            <Row key={node.path} node={node} depth={0} {...props} />
+          ))}
+        </div>
       )}
 
       <div className="mt-2 flex items-center gap-2 border-t px-1.5 pt-4 text-[11px] text-muted-foreground">
