@@ -16,6 +16,13 @@ export type FileNode = {
 // inspected. This whole branch is dead in the shipped app.
 export const isTauri = "__TAURI_INTERNALS__" in window;
 
+// Rust returns backslash paths on Windows, forward slashes elsewhere; the web
+// build only ever sees "/"-separated synthetic paths. Decide once from the
+// platform: sniffing each path would pick "\" for a POSIX folder whose name
+// merely contains a backslash.
+export const SEP: "/" | "\\" =
+  isTauri && navigator.userAgent.includes("Windows") ? "\\" : "/";
+
 function demoVideos(folder: string, count: number): FileNode[] {
   return Array.from({ length: count }, (_, i) => {
     const name = `${i + 1} Lesson ${i + 1}.mp4`;
