@@ -5,6 +5,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 const IS_MAC = navigator.platform.toLowerCase().includes("mac");
 
@@ -15,14 +16,16 @@ type Props = {
 };
 
 // The macOS window uses an overlay title bar, so the real traffic lights float
-// over this strip — hence the left inset. Elsewhere the OS draws its own bar
-// above us and no inset is needed.
+// over the top of this strip — hence the taller header and the top padding that
+// drops our own controls below them. Elsewhere the OS draws its own bar above us.
 export function AppHeader({ canGoBack, onHome, onShowShortcuts }: Props) {
   return (
     <header
-      data-tauri-drag-region
-      className="flex h-[68px] flex-none items-center gap-3 border-b bg-chrome px-6 pt-2"
-      style={IS_MAC ? { paddingLeft: 82 } : undefined}
+      data-tauri-drag-region="deep"
+      className={cn(
+        "relative flex flex-none items-center gap-3 border-b bg-chrome px-6",
+        IS_MAC ? "h-20 pt-7" : "h-[68px] pt-2"
+      )}
     >
       {canGoBack && (
         <Tooltip>
@@ -41,16 +44,18 @@ export function AppHeader({ canGoBack, onHome, onShowShortcuts }: Props) {
         </Tooltip>
       )}
 
-      <button
-        onClick={onHome}
-        className="flex items-center gap-2.5 font-bold"
-        aria-label="Back to home"
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-2.5",
+          IS_MAC ? "top-7" : "top-2"
+        )}
       >
-        <span className="grid size-6 place-items-center rounded-[7px] bg-primary text-sm text-primary-foreground">
+        <span className="grid size-6 place-items-center rounded-[7px] bg-primary text-sm font-bold text-primary-foreground">
           V
         </span>
-        <span>Video Playlist Player</span>
-      </button>
+        <span className="font-bold">Video Playlist Player</span>
+        <span className="text-xs text-muted-foreground">v{__APP_VERSION__}</span>
+      </div>
 
       <div className="ml-auto flex items-center gap-1">
         <Tooltip>
