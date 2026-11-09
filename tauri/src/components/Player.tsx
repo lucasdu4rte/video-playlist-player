@@ -94,8 +94,11 @@ export function Player({
   const type = mimeFor(path);
   const src = toMediaSrc(path);
 
+  // Anchored to the box's edges rather than sized at 100% of it: WebKit
+  // resolves a percentage height against the aspect-ratio height, ignoring the
+  // max-height that clamps the box, which pushed the control bar out of view.
   return (
-    <div className="relative h-full w-full">
+    <div className="absolute inset-0 flex">
       <MediaPlayer
         ref={playerRef}
         className="h-full w-full"
@@ -133,7 +136,10 @@ export function Player({
         {/* Vidstack sizes the <video> by width at 16:9, so a short player crops it; filling the height lets object-fit letterbox instead.
             Needs !important: Vidstack's CSS is unlayered and beats any Tailwind utility regardless of specificity. */}
         <MediaProvider className="[&_video]:h-full!" />
-        <DefaultVideoLayout icons={defaultLayoutIcons} />
+        <DefaultVideoLayout
+          icons={defaultLayoutIcons}
+          smallLayoutWhen={({ width }) => width < 576}
+        />
       </MediaPlayer>
 
       {FlashIcon && (
